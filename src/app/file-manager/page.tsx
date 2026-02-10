@@ -358,11 +358,35 @@ export default function FileManagerPage() {
           {!selectedAgent ? (
             <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
               <FolderOpen className="w-16 h-16 mb-4" />
-              <p className="text-lg">
-                {status !== 'connected' 
-                  ? 'Connect to gateway to view agent workspaces'
-                  : 'Select an agent to view their workspace'}
-              </p>
+              {status === 'connecting' ? (
+                <div className="flex flex-col items-center gap-4">
+                  <div className="animate-spin w-8 h-8 border-4 border-pink-500 border-t-transparent rounded-full" />
+                  <p className="text-lg">Connecting to gateway...</p>
+                </div>
+              ) : status === 'connected' ? (
+                <p className="text-lg">Select an agent to view their workspace</p>
+              ) : gatewayError ? (
+                <div className="flex flex-col items-center gap-4 max-w-lg text-center">
+                  <p className="text-lg text-destructive">Connection Failed</p>
+                  <p className="text-sm">{gatewayError}</p>
+                  <button
+                    onClick={() => setShowConnectionModal(true)}
+                    className="px-4 py-2 bg-pink-500/10 hover:bg-pink-500/20 border border-pink-400/50 rounded-lg text-pink-600 dark:text-pink-400 transition-colors"
+                  >
+                    Update Connection Settings
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-4">
+                  <p className="text-lg">Connect to gateway to view agent workspaces</p>
+                  <button
+                    onClick={() => setShowConnectionModal(true)}
+                    className="px-4 py-2 bg-pink-500/10 hover:bg-pink-500/20 border border-pink-400/50 rounded-lg text-pink-600 dark:text-pink-400 transition-colors"
+                  >
+                    Connect to Gateway
+                  </button>
+                </div>
+              )}
             </div>
           ) : loading ? (
             <div className="flex items-center justify-center py-20">

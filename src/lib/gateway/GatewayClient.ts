@@ -358,8 +358,8 @@ export const useGatewayConnection = (
 ): GatewayConnectionState => {
   const [client] = useState(() => new GatewayClient());
   const didAutoConnect = useRef(false);
-  const loadedGatewaySettings = useRef<{ gatewayUrl: string; token: string } | null>(null);
 
+  // IRON CLAD: localStorage is the ONLY source of truth for initial values
   const [gatewayUrl, setGatewayUrl] = useState(() =>
     loadFromLocalStorage(STORAGE_KEY_GATEWAY_URL, DEFAULT_GATEWAY_URL)
   );
@@ -368,45 +368,11 @@ export const useGatewayConnection = (
   );
   const [status, setStatus] = useState<GatewayStatus>("disconnected");
   const [error, setError] = useState<string | null>(null);
-  const [settingsLoaded, setSettingsLoaded] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    const loadSettings = async () => {
-      try {
-        const settings = await settingsCoordinator.loadSettings();
-        const gateway = settings?.gateway ?? null;
-        if (cancelled) return;
-        const nextGatewayUrl = gateway?.url?.trim() ? gateway.url : DEFAULT_GATEWAY_URL;
-        const nextToken = gateway?.token?.trim() ? gateway.token : DEFAULT_GATEWAY_TOKEN;
-        loadedGatewaySettings.current = {
-          gatewayUrl: nextGatewayUrl.trim(),
-          token: nextToken,
-        };
-        setGatewayUrl(nextGatewayUrl);
-        setToken(nextToken);
-      } catch {
-        if (!cancelled) {
-          setError("Failed to load gateway settings.");
-        }
-      } finally {
-        if (!cancelled) {
-          if (!loadedGatewaySettings.current) {
-            loadedGatewaySettings.current = {
-              gatewayUrl: DEFAULT_GATEWAY_URL.trim(),
-              token: "",
-            };
-          }
-          setSettingsLoaded(true);
-        }
-      }
-    };
-    void loadSettings();
-    return () => {
-      cancelled = true;
-    };
-  }, [settingsCoordinator]);
+  // Track last saved values to avoid redundant saves
+  const lastSavedRef = useRef({ gatewayUrl: "", token: "" });
 
+  // Status updates from client
   useEffect(() => {
     return client.onStatus((nextStatus) => {
       setStatus(nextStatus);
@@ -416,12 +382,14 @@ export const useGatewayConnection = (
     });
   }, [client]);
 
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       client.disconnect();
     };
   }, [client]);
 
+  // Connect function
   const connect = useCallback(async () => {
     setError(null);
     try {
@@ -431,46 +399,66 @@ export const useGatewayConnection = (
     }
   }, [client, gatewayUrl, token]);
 
+  // Auto-connect on mount if credentials exist
   useEffect(() => {
     if (didAutoConnect.current) return;
-    if (!settingsLoaded) return;
     if (!gatewayUrl.trim()) return;
     didAutoConnect.current = true;
     void connect();
-  }, [connect, gatewayUrl, settingsLoaded]);
+  }, [connect, gatewayUrl]);
 
+  // IRON CLAD SAVE: Immediately save to BOTH localStorage AND file on any change
   useEffect(() => {
-    if (!settingsLoaded) return;
-    const baseline = loadedGatewaySettings.current;
-    if (!baseline) return;
     const nextGatewayUrl = gatewayUrl.trim();
-    if (nextGatewayUrl === baseline.gatewayUrl && token === baseline.token) {
+    const nextToken = token;
+    
+    // Skip if values haven't changed
+    if (nextGatewayUrl === lastSavedRef.current.gatewayUrl && 
+        nextToken === lastSavedRef.current.token) {
       return;
     }
     
-    // Save to localStorage immediately
-    saveToLocalStorage(STORAGE_KEY_GATEWAY_URL, nextGatewayUrl);
-    saveToLocalStorage(STORAGE_KEY_GATEWAY_TOKEN, token);
+    // Update tracking ref
+    lastSavedRef.current = { gatewayUrl: nextGatewayUrl, token: nextToken };
     
-    // Also save to file-based settings
+    // SAVE TO LOCALSTORAGE IMMEDIATELY - SYNCHRONOUS
+    saveToLocalStorage(STORAGE_KEY_GATEWAY_URL, nextGatewayUrl);
+    saveToLocalStorage(STORAGE_KEY_GATEWAY_TOKEN, nextToken);
+    
+    // SAVE TO FILE IMMEDIATELY - NO DEBOUNCE
     settingsCoordinator.schedulePatch(
       {
         gateway: {
           url: nextGatewayUrl,
-          token,
+          token: nextToken,
         },
       },
-      400
+      0 // IMMEDIATE - NO DELAY
     );
-  }, [gatewayUrl, settingsCoordinator, settingsLoaded, token]);
+  }, [gatewayUrl, token, settingsCoordinator]);
 
+  // Disconnect function
   const disconnect = useCallback(() => {
     setError(null);
     client.disconnect();
   }, [client]);
 
+  // Clear error function
   const clearError = useCallback(() => {
     setError(null);
+  }, []);
+
+  // Wrapper for setGatewayUrl that saves immediately
+  const setGatewayUrlWithSave = useCallback((value: string) => {
+    const trimmed = value.trim();
+    setGatewayUrl(trimmed);
+    saveToLocalStorage(STORAGE_KEY_GATEWAY_URL, trimmed);
+  }, []);
+
+  // Wrapper for setToken that saves immediately
+  const setTokenWithSave = useCallback((value: string) => {
+    setToken(value);
+    saveToLocalStorage(STORAGE_KEY_GATEWAY_TOKEN, value);
   }, []);
 
   return {
@@ -481,8 +469,8 @@ export const useGatewayConnection = (
     error,
     connect,
     disconnect,
-    setGatewayUrl,
-    setToken,
+    setGatewayUrl: setGatewayUrlWithSave,
+    setToken: setTokenWithSave,
     clearError,
   };
 };
