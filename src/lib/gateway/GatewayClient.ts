@@ -70,6 +70,33 @@ export const isSameSessionKey = (a: string, b: string) => {
 
 const DEFAULT_GATEWAY_URL =
   process.env.NEXT_PUBLIC_GATEWAY_URL ?? "ws://127.0.0.1:18789";
+const DEFAULT_GATEWAY_TOKEN = process.env.NEXT_PUBLIC_GATEWAY_TOKEN ?? "";
+
+const STORAGE_KEY_GATEWAY_URL = "openclaw.gateway.url";
+const STORAGE_KEY_GATEWAY_TOKEN = "openclaw.gateway.token";
+
+const loadFromLocalStorage = (key: string, fallback: string): string => {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const stored = localStorage.getItem(key);
+    return stored?.trim() || fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+const saveToLocalStorage = (key: string, value: string): void => {
+  if (typeof window === "undefined") return;
+  try {
+    if (value.trim()) {
+      localStorage.setItem(key, value);
+    } else {
+      localStorage.removeItem(key);
+    }
+  } catch (err) {
+    console.warn(`Failed to save to localStorage: ${key}`, err);
+  }
+};
 
 type StatusHandler = (status: GatewayStatus) => void;
 
@@ -333,8 +360,12 @@ export const useGatewayConnection = (
   const didAutoConnect = useRef(false);
   const loadedGatewaySettings = useRef<{ gatewayUrl: string; token: string } | null>(null);
 
-  const [gatewayUrl, setGatewayUrl] = useState(DEFAULT_GATEWAY_URL);
-  const [token, setToken] = useState("");
+  const [gatewayUrl, setGatewayUrl] = useState(() =>
+    loadFromLocalStorage(STORAGE_KEY_GATEWAY_URL, DEFAULT_GATEWAY_URL)
+  );
+  const [token, setToken] = useState(() =>
+    loadFromLocalStorage(STORAGE_KEY_GATEWAY_TOKEN, DEFAULT_GATEWAY_TOKEN)
+  );
   const [status, setStatus] = useState<GatewayStatus>("disconnected");
   const [error, setError] = useState<string | null>(null);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
@@ -347,7 +378,7 @@ export const useGatewayConnection = (
         const gateway = settings?.gateway ?? null;
         if (cancelled) return;
         const nextGatewayUrl = gateway?.url?.trim() ? gateway.url : DEFAULT_GATEWAY_URL;
-        const nextToken = typeof gateway?.token === "string" ? gateway.token : "";
+        const nextToken = gateway?.token?.trim() ? gateway.token : DEFAULT_GATEWAY_TOKEN;
         loadedGatewaySettings.current = {
           gatewayUrl: nextGatewayUrl.trim(),
           token: nextToken,
@@ -416,6 +447,12 @@ export const useGatewayConnection = (
     if (nextGatewayUrl === baseline.gatewayUrl && token === baseline.token) {
       return;
     }
+    
+    // Save to localStorage immediately
+    saveToLocalStorage(STORAGE_KEY_GATEWAY_URL, nextGatewayUrl);
+    saveToLocalStorage(STORAGE_KEY_GATEWAY_TOKEN, token);
+    
+    // Also save to file-based settings
     settingsCoordinator.schedulePatch(
       {
         gateway: {

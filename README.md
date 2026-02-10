@@ -75,6 +75,7 @@ Optional overrides:
 - `OPENCLAW_STATE_DIR`
 - `OPENCLAW_CONFIG_PATH`
 - `NEXT_PUBLIC_GATEWAY_URL`
+- `NEXT_PUBLIC_GATEWAY_TOKEN`
 - `CLAWDBOT_DEFAULT_AGENT_ID`
 - `OPENCLAW_TASK_CONTROL_PLANE_BEADS_DIR` (local `.beads` directory for `/control-plane`)
 - `OPENCLAW_TASK_CONTROL_PLANE_GATEWAY_BEADS_DIR` (gateway-host `.beads` directory for `/control-plane`; runs `br` over SSH)

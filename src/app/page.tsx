@@ -8,7 +8,7 @@ import {
 } from "@/features/agents/components/AgentInspectPanels";
 import { FleetSidebar } from "@/features/agents/components/FleetSidebar";
 import { HeaderBar } from "@/features/agents/components/HeaderBar";
-import { ConnectionPanel } from "@/features/agents/components/ConnectionPanel";
+import { ConnectionSettingsModal } from "@/features/agents/components/ConnectionSettingsModal";
 import { EmptyStatePanel } from "@/features/agents/components/EmptyStatePanel";
 import {
   buildAgentInstruction,
@@ -221,7 +221,7 @@ const AgentStudioPage = () => {
   } = useGatewayConnection(settingsCoordinator);
 
   const { state, dispatch, hydrateAgents, setError, setLoading } = useAgentStore();
-  const [showConnectionPanel, setShowConnectionPanel] = useState(false);
+  const [showConnectionModal, setShowConnectionModal] = useState(false);
   const [focusFilter, setFocusFilter] = useState<FocusFilter>("all");
   const [focusedPreferencesLoaded, setFocusedPreferencesLoaded] = useState(false);
   const [agentsLoadedOnce, setAgentsLoadedOnce] = useState(false);
@@ -1204,7 +1204,7 @@ const AgentStudioPage = () => {
                     {
                       method: "POST",
                       headers: { "content-type": "application/json" },
-                      body: JSON.stringify({ agentId }),
+                      body: JSON.stringify({ agentId, gatewayUrl }),
                     }
                   );
                   return result;
@@ -1215,7 +1215,7 @@ const AgentStudioPage = () => {
                     {
                       method: "PUT",
                       headers: { "content-type": "application/json" },
-                      body: JSON.stringify({ agentId, trashDir }),
+                      body: JSON.stringify({ agentId, trashDir, gatewayUrl }),
                     }
                   );
                   return result;
@@ -1957,7 +1957,7 @@ const AgentStudioPage = () => {
     [dispatch]
   );
 
-  const connectionPanelVisible = showConnectionPanel;
+  const connectionModalVisible = showConnectionModal;
   const hasAnyAgents = agents.length > 0;
   const showFleetLayout = hasAnyAgents || status === "connected";
   const configMutationStatusLine = activeConfigMutation
@@ -2011,7 +2011,7 @@ const AgentStudioPage = () => {
         <div className="flex min-h-screen items-center justify-center px-6">
           <div className="glass-panel w-full max-w-md px-6 py-6 text-center">
             <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-              OpenClaw Studio
+                
             </div>
             <div className="mt-3 text-sm text-muted-foreground">
               {status === "connecting" ? "Connecting to gateway…" : "Loading agents…"}
@@ -2035,29 +2035,12 @@ const AgentStudioPage = () => {
         <div className="w-full">
           <HeaderBar
             status={status}
-            onConnectionSettings={() => setShowConnectionPanel((prev) => !prev)}
+            onConnectionSettings={() => setShowConnectionModal((prev) => !prev)}
             onBrainFiles={handleBrainToggle}
             brainFilesOpen={brainPanelOpen}
             brainDisabled={!hasAnyAgents}
           />
         </div>
-
-        {connectionPanelVisible ? (
-          <div className="w-full">
-            <div className="glass-panel px-4 py-4 sm:px-6 sm:py-6">
-              <ConnectionPanel
-                gatewayUrl={gatewayUrl}
-                token={token}
-                status={status}
-                error={gatewayError}
-                onGatewayUrlChange={setGatewayUrl}
-                onTokenChange={setToken}
-                onConnect={() => void connect()}
-                onDisconnect={disconnect}
-              />
-            </div>
-          </div>
-        ) : null}
 
         {errorMessage ? (
           <div className="w-full">
@@ -2345,6 +2328,19 @@ const AgentStudioPage = () => {
           </div>
         </div>
       ) : null}
+
+      <ConnectionSettingsModal
+        isOpen={connectionModalVisible}
+        gatewayUrl={gatewayUrl}
+        token={token}
+        status={status}
+        error={gatewayError}
+        onClose={() => setShowConnectionModal(false)}
+        onGatewayUrlChange={setGatewayUrl}
+        onTokenChange={setToken}
+        onConnect={() => void connect()}
+        onDisconnect={disconnect}
+      />
     </div>
   );
 };

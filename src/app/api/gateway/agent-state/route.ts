@@ -7,11 +7,13 @@ export const runtime = "nodejs";
 
 type TrashAgentStateRequest = {
   agentId: string;
+  gatewayUrl?: string;
 };
 
 type RestoreAgentStateRequest = {
   agentId: string;
   trashDir: string;
+  gatewayUrl?: string;
 };
 
 const isSafeAgentId = (value: string) => /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(value);
@@ -114,7 +116,12 @@ print(json.dumps({"restored": moves}))
 PY
 `;
 
-const resolveAgentStateSshTarget = (): string => {
+const resolveAgentStateSshTarget = (gatewayUrl?: string): string => {
+  // First try the provided gateway URL
+  if (gatewayUrl) {
+    return resolveGatewaySshTargetFromGatewayUrl(gatewayUrl, process.env);
+  }
+  // Fall back to settings file
   const settings = loadStudioSettings();
   return resolveGatewaySshTargetFromGatewayUrl(settings.gateway?.url ?? "", process.env);
 };
@@ -125,7 +132,7 @@ export async function POST(request: Request) {
     if (!body || typeof body !== "object") {
       return NextResponse.json({ error: "Invalid request payload." }, { status: 400 });
     }
-    const { agentId } = body as Partial<TrashAgentStateRequest>;
+    const { agentId, gatewayUrl } = body as Partial<TrashAgentStateRequest>;
     const trimmed = typeof agentId === "string" ? agentId.trim() : "";
     if (!trimmed) {
       return NextResponse.json({ error: "agentId is required." }, { status: 400 });
@@ -134,7 +141,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: `Invalid agentId: ${trimmed}` }, { status: 400 });
     }
 
-    const sshTarget = resolveAgentStateSshTarget();
+    const sshTarget = resolveAgentStateSshTarget(gatewayUrl);
     const result = runSshJson({
       sshTarget,
       argv: ["bash", "-s", "--", trimmed],
@@ -156,7 +163,7 @@ export async function PUT(request: Request) {
     if (!body || typeof body !== "object") {
       return NextResponse.json({ error: "Invalid request payload." }, { status: 400 });
     }
-    const { agentId, trashDir } = body as Partial<RestoreAgentStateRequest>;
+    const { agentId, trashDir, gatewayUrl } = body as Partial<RestoreAgentStateRequest>;
     const trimmedAgent = typeof agentId === "string" ? agentId.trim() : "";
     const trimmedTrash = typeof trashDir === "string" ? trashDir.trim() : "";
     if (!trimmedAgent) {
@@ -169,7 +176,7 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: `Invalid agentId: ${trimmedAgent}` }, { status: 400 });
     }
 
-    const sshTarget = resolveAgentStateSshTarget();
+    const sshTarget = resolveAgentStateSshTarget(gatewayUrl);
     const result = runSshJson({
       sshTarget,
       argv: ["bash", "-s", "--", trimmedAgent, trimmedTrash],

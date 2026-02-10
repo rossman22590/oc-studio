@@ -70,6 +70,13 @@ const createMockClient = () => {
       }
       return {};
     }),
+    getLastHello: vi.fn(() => ({
+      type: "hello-ok",
+      protocol: 3,
+      features: {
+        methods: ["agents.files.get", "agents.files.set"],
+      },
+    })),
   } as unknown as GatewayClient;
 
   return { client, calls, filesByAgent };
@@ -158,5 +165,34 @@ describe("AgentBrainPanel", () => {
           )
       )
     ).toBeTruthy();
+  });
+
+  it("shows_actionable_message_when_agents_files_method_missing", async () => {
+    const { client } = createMockClient();
+    const getLastHello = vi.fn(() => ({
+      type: "hello-ok",
+      protocol: 3,
+      features: {
+        methods: ["agents.list"],
+      },
+    }));
+    (client as unknown as { getLastHello: typeof getLastHello }).getLastHello = getLastHello;
+
+    const agents = [createAgent("agent-1", "Alpha", "session-1")];
+
+    render(
+      createElement(AgentBrainPanel, {
+        client,
+        agents,
+        selectedAgentId: "agent-1",
+        onClose: vi.fn(),
+      })
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/does not expose agents\.files\.get/i)
+      ).toBeInTheDocument();
+    });
   });
 });

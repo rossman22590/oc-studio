@@ -9,7 +9,13 @@ import type { AgentState } from "@/features/agents/state/store";
 import { formatCronPayload, formatCronSchedule, type CronJobSummary } from "@/lib/cron/types";
 import type { GatewayClient } from "@/lib/gateway/GatewayClient";
 import type { AgentHeartbeatSummary } from "@/lib/gateway/agentConfig";
-import { readGatewayAgentFile, writeGatewayAgentFile } from "@/lib/gateway/agentFiles";
+import {
+  listGatewayAgentFiles,
+  readGatewayAgentFile,
+  readGatewayAgentTextFile,
+  writeGatewayAgentFile,
+  type GatewayAgentFileEntry,
+} from "@/lib/gateway/agentFiles";
 import {
   AGENT_FILE_META,
   AGENT_FILE_NAMES,
@@ -486,6 +492,15 @@ const useAgentFilesEditor = (params: {
         setAgentFilesError("Gateway client is not available.");
         return;
       }
+      const supportedMethods = client.getLastHello()?.features?.methods ?? null;
+      if (Array.isArray(supportedMethods) && !supportedMethods.includes("agents.files.get")) {
+        setAgentFiles(createAgentFilesState());
+        setAgentFilesDirty(false);
+        setAgentFilesError(
+          "This gateway does not expose agents.files.get. If you're connecting through a proxy, configure gateway.trustedProxies (so the gateway can treat you as local), or run Studio on the gateway host. Otherwise update OpenClaw."
+        );
+        return;
+      }
       const results = await Promise.all(
         AGENT_FILE_NAMES.map(async (name) => {
           const file = await readGatewayAgentFile({ client, agentId: trimmedAgentId, name });
@@ -521,6 +536,13 @@ const useAgentFilesEditor = (params: {
       }
       if (!client) {
         setAgentFilesError("Gateway client is not available.");
+        return false;
+      }
+      const supportedMethods = client.getLastHello()?.features?.methods ?? null;
+      if (Array.isArray(supportedMethods) && !supportedMethods.includes("agents.files.set")) {
+        setAgentFilesError(
+          "This gateway does not expose agents.files.set. If you're connecting through a proxy, configure gateway.trustedProxies (so the gateway can treat you as local), or run Studio on the gateway host. Otherwise update OpenClaw."
+        );
         return false;
       }
       await Promise.all(
@@ -598,6 +620,178 @@ const useAgentFilesEditor = (params: {
   };
 };
 
+type WorkspaceSelectedFile = {
+  path: string;
+  exists: boolean;
+  content: string;
+};
+
+type UseAgentWorkspaceBrowserResult = {
+  cwd: string;
+  entries: GatewayAgentFileEntry[];
+  loading: boolean;
+  error: string | null;
+  selectedFile: WorkspaceSelectedFile | null;
+  selectedLoading: boolean;
+  selectedError: string | null;
+  goUp: () => void;
+  openEntry: (entry: GatewayAgentFileEntry) => void;
+  refresh: () => void;
+};
+
+const useAgentWorkspaceBrowser = (params: {
+  client: GatewayClient | null | undefined;
+  agentId: string | null | undefined;
+  enabled: boolean;
+}): UseAgentWorkspaceBrowserResult => {
+  const { client, agentId, enabled } = params;
+  const [cwd, setCwd] = useState("");
+  const [entries, setEntries] = useState<GatewayAgentFileEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<WorkspaceSelectedFile | null>(null);
+  const [selectedLoading, setSelectedLoading] = useState(false);
+  const [selectedError, setSelectedError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    if (!enabled) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const trimmedAgentId = agentId?.trim();
+      if (!trimmedAgentId) {
+        setEntries([]);
+        setSelectedFile(null);
+        setError("Agent ID is missing for this agent.");
+        return;
+      }
+      if (!client) {
+        setEntries([]);
+        setSelectedFile(null);
+        setError("Gateway client is not available.");
+        return;
+      }
+
+      // Use Daytona API to list ALL workspace files (not just brain files)
+      // Get gateway URL from localStorage with fallback to env var
+      const DEFAULT_GATEWAY_URL =
+        process.env.NEXT_PUBLIC_GATEWAY_URL ?? "ws://127.0.0.1:18789";
+      const gatewayUrl = typeof window !== "undefined" 
+        ? (localStorage.getItem("openclaw.gateway.url")?.trim() || DEFAULT_GATEWAY_URL)
+        : DEFAULT_GATEWAY_URL;
+      
+      if (!gatewayUrl) {
+        throw new Error("Gateway URL is not configured. Please set it in connection settings.");
+      }
+      
+      const response = await fetch(
+        `/api/gateway/workspace-files?agentId=${encodeURIComponent(trimmedAgentId)}&path=${encodeURIComponent(cwd)}&gatewayUrl=${encodeURIComponent(gatewayUrl)}`
+      );
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Failed to fetch workspace files: ${response.statusText}`);
+      }
+      const data = await response.json();
+      setEntries(data.entries || []);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to list workspace files.";
+      setError(message);
+      setEntries([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [agentId, client, cwd, enabled]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    void refresh();
+  }, [enabled, refresh]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    setCwd("");
+    setEntries([]);
+    setSelectedFile(null);
+    setSelectedError(null);
+    setError(null);
+  }, [agentId, enabled]);
+
+  const goUp = useCallback(() => {
+    if (!cwd) return;
+    const next = cwd.split("/").slice(0, -1).join("/");
+    setCwd(next);
+    setSelectedFile(null);
+  }, [cwd]);
+
+  const openEntry = useCallback(
+    (entry: GatewayAgentFileEntry) => {
+      if (entry.isDirectory) {
+        setCwd(entry.path);
+        setSelectedFile(null);
+        setSelectedError(null);
+        return;
+      }
+      const trimmedAgentId = agentId?.trim() ?? "";
+      if (!trimmedAgentId) {
+        setSelectedError("Agent ID is not available.");
+        return;
+      }
+      
+      console.log("Opening file:", entry.path, "isDirectory:", entry.isDirectory);
+      
+      setSelectedLoading(true);
+      setSelectedError(null);
+      
+      // Use API route to read file via Daytona
+      const DEFAULT_GATEWAY_URL = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "ws://127.0.0.1:18789";
+      const gatewayUrl = typeof window !== "undefined" 
+        ? (localStorage.getItem("openclaw.gateway.url")?.trim() || DEFAULT_GATEWAY_URL)
+        : DEFAULT_GATEWAY_URL;
+      
+      fetch(`/api/gateway/workspace-files/read?agentId=${encodeURIComponent(trimmedAgentId)}&path=${encodeURIComponent(entry.path)}&gatewayUrl=${encodeURIComponent(gatewayUrl)}`)
+        .then(async (response) => {
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || `Failed to read file: ${response.statusText}`);
+          }
+          return response.json();
+        })
+        .then((data) => {
+          const content = data.content ?? "";
+          const maxChars = 250_000;
+          setSelectedFile({
+            path: entry.path,
+            exists: true,
+            content: content.length > maxChars ? content.slice(0, maxChars) : content,
+          });
+          if (content.length > maxChars) {
+            setSelectedError(`File too large; showing first ${maxChars.toLocaleString()} chars.`);
+          }
+        })
+        .catch((err) => {
+          const message = err instanceof Error ? err.message : "Failed to read file.";
+          setSelectedFile(null);
+          setSelectedError(message);
+        })
+        .finally(() => setSelectedLoading(false));
+    },
+    [agentId]
+  );
+
+  return {
+    cwd,
+    entries,
+    loading,
+    error,
+    selectedFile,
+    selectedLoading,
+    selectedError,
+    goUp,
+    openEntry,
+    refresh: () => void refresh(),
+  };
+};
+
 export const AgentBrainPanel = ({
   client,
   agents,
@@ -623,6 +817,12 @@ export const AgentBrainPanel = ({
     handleAgentFileTabChange,
     saveAgentFiles,
   } = useAgentFilesEditor({ client, agentId: selectedAgent?.agentId ?? null });
+  const [panelMode, setPanelMode] = useState<"brain" | "workspace">("brain");
+  const workspace = useAgentWorkspaceBrowser({
+    client,
+    agentId: selectedAgent?.agentId ?? null,
+    enabled: panelMode === "workspace",
+  });
   const [previewMode, setPreviewMode] = useState(true);
 
   const handleTabChange = useCallback(
@@ -640,6 +840,19 @@ export const AgentBrainPanel = ({
     }
     onClose();
   }, [agentFilesDirty, agentFilesSaving, onClose, saveAgentFiles]);
+
+  const handleModeChange = useCallback(
+    async (nextMode: "brain" | "workspace") => {
+      if (nextMode === panelMode) return;
+      if (agentFilesSaving) return;
+      if (agentFilesDirty) {
+        const saved = await saveAgentFiles();
+        if (!saved) return;
+      }
+      setPanelMode(nextMode);
+    },
+    [agentFilesDirty, agentFilesSaving, panelMode, saveAgentFiles]
+  );
 
   return (
     <div
@@ -661,96 +874,258 @@ export const AgentBrainPanel = ({
         <section className="flex min-h-0 flex-1 flex-col" data-testid="agent-brain-files">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-              {AGENT_FILE_META[agentFileTab].hint}
+              {panelMode === "brain"
+                ? AGENT_FILE_META[agentFileTab].hint
+                : "Browse the agent workspace and data files."}
             </div>
-          </div>
-          {agentFilesError ? (
-            <div className="mt-3 rounded-md border border-destructive bg-destructive px-3 py-2 text-xs text-destructive-foreground">
-              {agentFilesError}
-            </div>
-          ) : null}
-
-          <div className="mt-4 flex flex-wrap items-end gap-2">
-            {AGENT_FILE_NAMES.map((name) => {
-              const active = name === agentFileTab;
-              const label = AGENT_FILE_META[name].title.replace(".md", "");
-              return (
-                <button
-                  key={name}
-                  type="button"
-                  className={`rounded-full border px-3 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] transition ${
-                    active
-                      ? "border-border bg-background text-foreground shadow-sm"
-                      : "border-transparent bg-muted/60 text-muted-foreground hover:border-border/80 hover:bg-muted"
-                  }`}
-                  onClick={() => {
-                    void handleTabChange(name);
-                  }}
-                >
-                  {label}
-                </button>
-              );
-            })}
           </div>
 
           <div className="mt-3 flex items-center justify-end gap-1">
             <button
               type="button"
               className={`rounded-md border px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] transition ${
-                previewMode
+                panelMode === "brain"
                   ? "border-border bg-background text-foreground"
                   : "border-border/70 bg-card/60 text-muted-foreground hover:bg-muted/70"
               }`}
-              onClick={() => setPreviewMode(true)}
+              onClick={() => void handleModeChange("brain")}
             >
-              Preview
+              Brain
             </button>
             <button
               type="button"
               className={`rounded-md border px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] transition ${
-                previewMode
-                  ? "border-border/70 bg-card/60 text-muted-foreground hover:bg-muted/70"
-                  : "border-border bg-background text-foreground"
+                panelMode === "workspace"
+                  ? "border-border bg-background text-foreground"
+                  : "border-border/70 bg-card/60 text-muted-foreground hover:bg-muted/70"
               }`}
-              onClick={() => setPreviewMode(false)}
+              onClick={() => void handleModeChange("workspace")}
             >
-              Edit
+              Workspace
             </button>
           </div>
 
-          <div className="mt-3 min-h-0 flex-1 rounded-md bg-muted/30 p-2">
-            {previewMode ? (
-              <div className="agent-markdown h-full overflow-y-auto rounded-md border border-border/80 bg-background/80 px-3 py-2 text-xs text-foreground">
-                {agentFiles[agentFileTab].content.trim().length === 0 ? (
-                  <p className="text-muted-foreground">
-                    {AGENT_FILE_PLACEHOLDERS[agentFileTab]}
-                  </p>
+          {agentFilesError ? (
+            <div className="mt-3 rounded-md border border-destructive bg-destructive px-3 py-2 text-xs text-destructive-foreground">
+              {agentFilesError}
+            </div>
+          ) : null}
+
+          {panelMode === "brain" ? (
+            <>
+              <div className="mt-4 flex flex-wrap items-end gap-2">
+                {AGENT_FILE_NAMES.map((name) => {
+                  const active = name === agentFileTab;
+                  const label = AGENT_FILE_META[name].title.replace(".md", "");
+                  return (
+                    <button
+                      key={name}
+                      type="button"
+                      className={`rounded-full border px-3 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] transition ${
+                        active
+                          ? "border-border bg-background text-foreground shadow-sm"
+                          : "border-transparent bg-muted/60 text-muted-foreground hover:border-border/80 hover:bg-muted"
+                      }`}
+                      onClick={() => {
+                        void handleTabChange(name);
+                      }}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="mt-3 flex items-center justify-end gap-1">
+                <button
+                  type="button"
+                  className={`rounded-md border px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] transition ${
+                    previewMode
+                      ? "border-border bg-background text-foreground"
+                      : "border-border/70 bg-card/60 text-muted-foreground hover:bg-muted/70"
+                  }`}
+                  onClick={() => setPreviewMode(true)}
+                >
+                  Preview
+                </button>
+                <button
+                  type="button"
+                  className={`rounded-md border px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] transition ${
+                    previewMode
+                      ? "border-border/70 bg-card/60 text-muted-foreground hover:bg-muted/70"
+                      : "border-border bg-background text-foreground"
+                  }`}
+                  onClick={() => setPreviewMode(false)}
+                >
+                  Edit
+                </button>
+              </div>
+
+              <div className="mt-3 min-h-0 flex-1 rounded-md bg-muted/30 p-2">
+                {previewMode ? (
+                  <div className="agent-markdown h-full overflow-y-auto rounded-md border border-border/80 bg-background/80 px-3 py-2 text-xs text-foreground">
+                    {agentFiles[agentFileTab].content.trim().length === 0 ? (
+                      <p className="text-muted-foreground">
+                        {AGENT_FILE_PLACEHOLDERS[agentFileTab]}
+                      </p>
+                    ) : (
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {agentFiles[agentFileTab].content}
+                      </ReactMarkdown>
+                    )}
+                  </div>
                 ) : (
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {agentFiles[agentFileTab].content}
-                  </ReactMarkdown>
+                  <textarea
+                    className="h-full min-h-0 w-full resize-none overflow-y-auto rounded-md border border-border/80 bg-background/80 px-3 py-2 font-mono text-xs text-foreground outline-none"
+                    value={agentFiles[agentFileTab].content}
+                    placeholder={
+                      agentFiles[agentFileTab].content.trim().length === 0
+                        ? AGENT_FILE_PLACEHOLDERS[agentFileTab]
+                        : undefined
+                    }
+                    disabled={agentFilesLoading || agentFilesSaving}
+                    onChange={(event) => {
+                      setAgentFileContent(event.target.value);
+                    }}
+                  />
                 )}
               </div>
-            ) : (
-              <textarea
-                className="h-full min-h-0 w-full resize-none overflow-y-auto rounded-md border border-border/80 bg-background/80 px-3 py-2 font-mono text-xs text-foreground outline-none"
-                value={agentFiles[agentFileTab].content}
-                placeholder={
-                  agentFiles[agentFileTab].content.trim().length === 0
-                    ? AGENT_FILE_PLACEHOLDERS[agentFileTab]
-                    : undefined
-                }
-                disabled={agentFilesLoading || agentFilesSaving}
-                onChange={(event) => {
-                  setAgentFileContent(event.target.value);
-                }}
-              />
-            )}
-          </div>
 
-          <div className="mt-3 flex items-center justify-between gap-2 pt-2">
-            <div className="text-xs text-muted-foreground">All changes saved</div>
-          </div>
+              <div className="mt-3 flex items-center justify-between gap-2 pt-2">
+                <div className="text-xs text-muted-foreground">
+                  {agentFilesDirty ? "Unsaved changes" : "All changes saved"}
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="mt-4 flex min-h-0 flex-1 flex-col gap-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  Directory
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    className="rounded-md border border-border/70 bg-card/60 px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground transition hover:bg-muted/70 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={workspace.goUp}
+                    disabled={!workspace.cwd}
+                  >
+                    Up
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-md border border-border/70 bg-card/60 px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground transition hover:bg-muted/70 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={workspace.refresh}
+                    disabled={workspace.loading}
+                  >
+                    Refresh
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-md border border-border/80 bg-background/75 px-3 py-2 font-mono text-[11px] text-muted-foreground/90">
+                {workspace.cwd ? `/${workspace.cwd}` : "/"}
+              </div>
+
+              {workspace.error ? (
+                <div className="rounded-md border border-destructive bg-destructive px-3 py-2 text-xs text-destructive-foreground">
+                  {workspace.error}
+                </div>
+              ) : null}
+
+              <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border/80 bg-card/60">
+                <div className="h-full overflow-y-auto p-2">
+                  {workspace.loading ? (
+                    <div className="px-2 py-2 text-xs text-muted-foreground">
+                      Loading...
+                    </div>
+                  ) : null}
+                  {!workspace.loading && workspace.entries.length === 0 ? (
+                    <div className="px-2 py-2 text-xs text-muted-foreground">
+                      No files found.
+                    </div>
+                  ) : null}
+                  {workspace.entries.map((entry) => (
+                    <button
+                      key={entry.path}
+                      type="button"
+                      className={`flex w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left font-mono text-[11px] uppercase tracking-[0.12em] transition hover:bg-muted/60 ${
+                        workspace.selectedFile?.path === entry.path
+                          ? "bg-muted/70 text-foreground"
+                          : "text-muted-foreground"
+                      }`}
+                      onClick={() => workspace.openEntry(entry)}
+                    >
+                      <span className="truncate">
+                        {entry.isDirectory ? `${entry.name}/` : entry.name}
+                      </span>
+                      {typeof entry.size === "number" && !entry.isDirectory ? (
+                        <span className="shrink-0 text-[10px] text-muted-foreground/70">
+                          {entry.size.toLocaleString()}
+                        </span>
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border/80 bg-background/80">
+                <div className="h-full overflow-y-auto p-3">
+                  {workspace.selectedLoading ? (
+                    <div className="text-xs text-muted-foreground">Loading file...</div>
+                  ) : null}
+                  {workspace.selectedError ? (
+                    <div className="rounded-md border border-destructive bg-destructive px-3 py-2 text-xs text-destructive-foreground">
+                      {workspace.selectedError}
+                    </div>
+                  ) : null}
+                  {!workspace.selectedLoading && 
+                   !workspace.selectedError && 
+                   !workspace.selectedFile ? (
+                    <div className="text-xs text-muted-foreground">
+                      Select a file to preview it.
+                    </div>
+                  ) : null}
+                  {workspace.selectedFile ? (
+                    <>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                            {workspace.selectedFile?.exists ? "File" : "Missing"}
+                          </div>
+                          <div className="mt-1 break-all font-mono text-[11px] text-muted-foreground/90">
+                            {workspace.selectedFile?.path}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          className="rounded-md border border-border/80 bg-card/70 px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground transition hover:border-border hover:bg-muted/65"
+                          onClick={() => {
+                            const blob = new Blob([workspace.selectedFile?.content ?? ""], { type: "text/plain" });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = workspace.selectedFile?.path.split("/").pop() ?? "file.txt";
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                            URL.revokeObjectURL(url);
+                          }}
+                        >
+                          Download
+                        </button>
+                      </div>
+                      <pre className="mt-3 whitespace-pre-wrap break-words rounded-md border border-border/80 bg-card/60 p-3 font-mono text-xs text-foreground">
+                        {workspace.selectedFile?.content.trim().length ?? 0 > 0
+                          ? workspace.selectedFile?.content
+                          : "(empty)"}
+                      </pre>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          )}
         </section>
       </div>
     </div>
