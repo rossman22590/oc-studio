@@ -225,6 +225,10 @@ export default function FileManagerPage() {
         fileContent = data.content;
       }
 
+      if (!fileContent) {
+        throw new Error('File content is empty');
+      }
+
       const blob = new Blob([fileContent], { type: 'text/plain' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
