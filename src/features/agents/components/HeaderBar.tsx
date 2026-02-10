@@ -1,6 +1,6 @@
 import { ThemeToggle } from "@/components/theme-toggle";
 import type { GatewayStatus } from "@/lib/gateway/GatewayClient";
-import { Brain, Ellipsis, Cable, FolderOpen, Home } from "lucide-react";
+import { Brain, Ellipsis, Cable, FolderOpen, Home, PanelLeftClose, PanelLeftOpen, PanelRightClose } from "lucide-react";
 import Link from "next/link";
 
 type HeaderBarProps = {
@@ -11,6 +11,10 @@ type HeaderBarProps = {
   brainDisabled?: boolean;
   showFilesButton?: boolean;
   showHomeButton?: boolean;
+  sidebarCollapsed?: boolean;
+  onToggleSidebar?: () => void;
+  rightPanelOpen?: boolean;
+  onCloseRightPanel?: () => void;
 };
 
 export const HeaderBar = ({
@@ -21,20 +25,53 @@ export const HeaderBar = ({
   brainDisabled = false,
   showFilesButton = true,
   showHomeButton = false,
+  sidebarCollapsed = false,
+  onToggleSidebar,
+  rightPanelOpen = false,
+  onCloseRightPanel,
 }: HeaderBarProps) => {
   return (
     <div className="glass-panel fade-up relative overflow-hidden px-4 py-2">
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(120deg,transparent_0%,color-mix(in_oklch,var(--primary)_7%,transparent)_48%,transparent_100%)] opacity-55" />
       <div className="relative grid items-center gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
-        <div className="min-w-0">
-          <Link href="/" className="inline-block hover:opacity-80 transition-opacity">
+        <div className="min-w-0 flex items-center gap-2">
+          <Link href="/" className="inline-flex items-center gap-2 hover:opacity-80 transition-opacity shrink-0">
+            <img src="/logo.png" alt="MachineClaw" className="h-8 w-8 sm:h-10 sm:w-10" />
             <p className="console-title text-2xl leading-none text-foreground sm:text-3xl">
-              MachineClaw Studio
+              MachineClaw
             </p>
           </Link>
         </div>
 
         <div className="flex items-center justify-end gap-2">
+          {/* Sidebar toggle — desktop only */}
+          {onToggleSidebar ? (
+            <button
+              type="button"
+              onClick={onToggleSidebar}
+              className="hidden xl:flex items-center gap-1.5 rounded-md border border-input/90 bg-background/75 px-2.5 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-foreground transition hover:border-ring hover:bg-card"
+              title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+              data-testid="sidebar-toggle"
+            >
+              {sidebarCollapsed ? (
+                <PanelLeftOpen className="h-4 w-4" />
+              ) : (
+                <PanelLeftClose className="h-4 w-4" />
+              )}
+            </button>
+          ) : null}
+          {/* Close right panel — desktop only, visible when brain/settings open */}
+          {rightPanelOpen && onCloseRightPanel ? (
+            <button
+              type="button"
+              onClick={onCloseRightPanel}
+              className="hidden xl:flex items-center gap-1.5 rounded-md border border-input/90 bg-background/75 px-2.5 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-foreground transition hover:border-ring hover:bg-card"
+              title="Close side panel"
+              data-testid="close-right-panel"
+            >
+              <PanelRightClose className="h-4 w-4" />
+            </button>
+          ) : null}
           {status === "connecting" ? (
             <span
               className="inline-flex items-center rounded-md border border-border/70 bg-secondary px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.15em] text-secondary-foreground"
@@ -46,15 +83,24 @@ export const HeaderBar = ({
           <button
             className={`flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] transition ${
               status === "connected"
-                ? "border-primary/50 bg-primary/15 text-foreground hover:border-primary hover:bg-primary/20"
+                ? "border-green-500/50 bg-green-500/15 text-foreground hover:border-green-500 hover:bg-green-500/20"
                 : "border-input/90 bg-background/75 text-foreground hover:border-ring hover:bg-card"
             }`}
             type="button"
             onClick={onConnectionSettings}
             data-testid="connect-button"
           >
-            <Cable className="h-4 w-4" />
-            Connect
+            {status === "connected" ? (
+              <>
+                <span className="h-2.5 w-2.5 rounded-full bg-green-500 animate-pulse" />
+                Connected
+              </>
+            ) : (
+              <>
+                <Cable className="h-4 w-4" />
+                Connect
+              </>
+            )}
           </button>
           {showHomeButton && (
             <Link

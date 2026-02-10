@@ -59,6 +59,39 @@ export const writeGatewayAgentFile = async (params: {
   });
 };
 
+/**
+ * Initialize agent workspace by writing a minimal file.
+ * This ensures the workspace directory is created on the gateway.
+ */
+export const initializeAgentWorkspace = async (params: {
+  client: GatewayClient;
+  agentId: string;
+}): Promise<void> => {
+  const agentId = resolveAgentId(params.agentId);
+  
+  // Retry up to 3 times with delays to handle timing issues
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await params.client.call("agents.files.set", {
+        agentId,
+        name: "AGENTS.md",
+        content: "# Agents\n\nAgent configuration and notes.\n",
+      });
+      return; // Success
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt < 2) {
+        // Wait before retrying (exponential backoff: 200ms, 500ms)
+        await new Promise(resolve => setTimeout(resolve, 200 * (attempt + 1)));
+      }
+    }
+  }
+  
+  // Log but don't throw - bootstrap will attempt anyway
+  console.error("Failed to initialize agent workspace after retries:", lastError);
+};
+
 export type GatewayAgentFileEntry = {
   name: string;
   path: string;

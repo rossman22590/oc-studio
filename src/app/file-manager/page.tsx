@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Search, FolderOpen, FileText, Download, ArrowLeft, ChevronRight, X, Code, FileCode, RefreshCw } from 'lucide-react';
+import { Search, FolderOpen, FileText, Download, ArrowLeft, ChevronRight, X, Code, FileCode, RefreshCw, Image as ImageIcon } from 'lucide-react';
 import { HeaderBar } from '@/features/agents/components/HeaderBar';
 import { ConnectionSettingsModal } from '@/features/agents/components/ConnectionSettingsModal';
 import { useGatewayConnection } from '@/lib/gateway/GatewayClient';
@@ -52,6 +52,7 @@ export default function FileManagerPage() {
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<FilePreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [brokenImage, setBrokenImage] = useState(false);
 
   // Load agents from gateway
   useEffect(() => {
@@ -159,6 +160,7 @@ export default function FileManagerPage() {
       setCurrentPath(newPath);
     } else {
       // Preview file
+      setBrokenImage(false); // Reset broken image state
       await previewFile(file);
     }
   };
@@ -537,6 +539,30 @@ export default function FileManagerPage() {
                     Download to view
                   </button>
                 </div>
+              ) : preview.type === 'image' ? (
+                brokenImage ? (
+                  <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                    <ImageIcon className="w-24 h-24 mb-4 opacity-50" />
+                    <p className="text-lg font-semibold mb-2">Image failed to load</p>
+                    <p className="text-sm mb-6">The image file may be corrupted or in an unsupported format</p>
+                    <button
+                      onClick={() => downloadFile(preview.file, preview.content)}
+                      className="flex items-center gap-2 px-6 py-3 rounded-lg bg-gradient-to-r from-pink-500 to-pink-600 text-white hover:from-pink-600 hover:to-pink-700 transition-all shadow-lg shadow-pink-500/30 hover:shadow-xl hover:shadow-pink-500/40 font-medium"
+                    >
+                      <Download className="w-4 h-4" />
+                      Download instead
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center h-full">
+                    <img
+                      src={preview.content}
+                      alt={preview.file.name}
+                      className="max-w-full max-h-full object-contain rounded-lg"
+                      onError={() => setBrokenImage(true)}
+                    />
+                  </div>
+                )
               ) : (
                 <pre className="bg-muted/30 rounded-lg p-4 overflow-x-auto whitespace-pre-wrap break-words">
                   <code className="text-sm font-mono text-foreground">

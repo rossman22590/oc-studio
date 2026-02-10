@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { Search } from "lucide-react";
 import type { AgentState, FocusFilter } from "@/features/agents/state/store";
 import { getAttentionForAgent } from "@/features/agents/state/store";
 import { AgentAvatar } from "./AgentAvatar";
@@ -47,6 +49,12 @@ export const FleetSidebar = ({
   createDisabled = false,
   createBusy = false,
 }: FleetSidebarProps) => {
+  const [searchQuery, setSearchQuery] = useState("");
+  
+  const filteredAgents = agents.filter((agent) =>
+    agent.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   return (
     <aside
       className="glass-panel fade-up-delay relative flex h-full w-full min-w-72 flex-col gap-3 p-3 xl:max-w-[320px]"
@@ -63,6 +71,18 @@ export const FleetSidebar = ({
         >
           {createBusy ? "Creating..." : "New Agent"}
         </button>
+      </div>
+
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+        <input
+          type="text"
+          placeholder="Search agents..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-full rounded-md border border-input bg-background/75 pl-9 pr-3 py-2 text-sm placeholder-muted-foreground transition focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+          data-testid="fleet-search-input"
+        />
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -88,11 +108,11 @@ export const FleetSidebar = ({
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
-        {agents.length === 0 ? (
-          <EmptyStatePanel title="No agents available." compact className="p-3 text-xs" />
+        {filteredAgents.length === 0 ? (
+          <EmptyStatePanel title={searchQuery ? "No agents match your search." : "No agents available."} compact className="p-3 text-xs" />
         ) : (
           <div className="flex flex-col gap-2">
-            {agents.map((agent) => {
+            {filteredAgents.map((agent) => {
               const selected = selectedAgentId === agent.agentId;
               const attention = getAttentionForAgent(agent, selectedAgentId);
               const avatarSeed = agent.avatarSeed ?? agent.agentId;

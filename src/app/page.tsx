@@ -10,6 +10,8 @@ import { FleetSidebar } from "@/features/agents/components/FleetSidebar";
 import { HeaderBar } from "@/features/agents/components/HeaderBar";
 import { ConnectionSettingsModal } from "@/features/agents/components/ConnectionSettingsModal";
 import { EmptyStatePanel } from "@/features/agents/components/EmptyStatePanel";
+import { StatsBar, ActivityFeed, AgentQuickCards, MobileBottomNav } from "@/features/agents/components/dashboard";
+import type { ActivityEntry } from "@/features/agents/components/dashboard";
 import {
   buildAgentInstruction,
   extractText,
@@ -73,7 +75,7 @@ import {
   type EventFrame,
 } from "@/lib/gateway/GatewayClient";
 import { fetchJson } from "@/lib/http";
-import { bootstrapAgentBrainFilesFromTemplate } from "@/lib/gateway/agentFiles";
+import { bootstrapAgentBrainFilesFromTemplate, initializeAgentWorkspace } from "@/lib/gateway/agentFiles";
 import {
   runDeleteAgentTransaction,
   type RestoreAgentStateResult,
@@ -248,6 +250,7 @@ const AgentStudioPage = () => {
   const [heartbeatRunBusyId, setHeartbeatRunBusyId] = useState<string | null>(null);
   const [heartbeatDeleteBusyId, setHeartbeatDeleteBusyId] = useState<string | null>(null);
   const [brainPanelOpen, setBrainPanelOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [deleteAgentBlock, setDeleteAgentBlock] = useState<DeleteAgentBlockState | null>(null);
   const [createAgentBlock, setCreateAgentBlock] = useState<CreateAgentBlockState | null>(null);
   const [renameAgentBlock, setRenameAgentBlock] = useState<RenameAgentBlockState | null>(null);
@@ -304,6 +307,30 @@ const AgentStudioPage = () => {
   );
   const hasRunningAgents = runningAgentCount > 0;
   const queuedConfigMutationCount = queuedConfigMutations.length;
+
+  /* ─── Dashboard: Activity feed ─── */
+  const [activityEntries, setActivityEntries] = useState<ActivityEntry[]>([]);
+  const pushActivity = useCallback(
+    (agentName: string, action: string, entryStatus: ActivityEntry["status"] = "ok") => {
+      setActivityEntries((prev) => {
+        const next: ActivityEntry = {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          agentName,
+          action,
+          timestamp: Date.now(),
+          status: entryStatus,
+        };
+        return [next, ...prev].slice(0, 50);
+      });
+    },
+    []
+  );
+
+  /* ─── Dashboard: Total messages (approximation from agent output lines) ─── */
+  const totalMessages = useMemo(
+    () => agents.reduce((sum, agent) => sum + (agent.outputLines?.length ?? 0), 0),
+    [agents]
+  );
 
   const flushPendingDraft = useCallback(
     (agentId: string | null) => {
@@ -1413,6 +1440,7 @@ const AgentStudioPage = () => {
     setCreateAgentBusy(true);
     try {
       const name = resolveNextNewAgentName(stateRef.current.agents);
+      pushActivity(name, "Agent created", "ok");
       setCreateAgentBlock({
         agentId: null,
         agentName: name,
@@ -1493,6 +1521,7 @@ const AgentStudioPage = () => {
 	          return { ...current, phase: "bootstrapping-files" };
 	        });
 	        try {
+	          await initializeAgentWorkspace({ client, agentId: newAgentId });
 	          await bootstrapAgentBrainFilesFromTemplate({ client, agentId: newAgentId });
 	        } catch (err) {
 	          const message =
@@ -1669,6 +1698,7 @@ const AgentStudioPage = () => {
         agentId,
         line: `> ${trimmed}`,
       });
+      pushActivity(agent.name, `Sent: ${trimmed.slice(0, 60)}${trimmed.length > 60 ? "…" : ""}`, "running");
       try {
         if (!sessionKey) {
           throw new Error("Missing session key for agent.");
@@ -2039,6 +2069,13 @@ const AgentStudioPage = () => {
             onBrainFiles={handleBrainToggle}
             brainFilesOpen={brainPanelOpen}
             brainDisabled={!hasAnyAgents}
+            sidebarCollapsed={sidebarCollapsed}
+            onToggleSidebar={() => setSidebarCollapsed((prev) => !prev)}
+            rightPanelOpen={brainPanelOpen || !!settingsAgent}
+            onCloseRightPanel={() => {
+              setBrainPanelOpen(false);
+              setSettingsAgentId(null);
+            }}
           />
         </div>
 
@@ -2058,63 +2095,24 @@ const AgentStudioPage = () => {
         ) : null}
 
         {showFleetLayout ? (
-          <div className="flex min-h-0 flex-1 flex-col gap-4 xl:flex-row">
-            <div className="glass-panel p-2 xl:hidden" data-testid="mobile-pane-toggle">
-              <div className="grid grid-cols-4 gap-2">
-                <button
-                  type="button"
-                  className={`rounded-md border px-2 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.13em] transition ${
-                    mobilePane === "fleet"
-                      ? "border-border bg-muted text-foreground shadow-xs"
-                      : "border-border/80 bg-card/65 text-muted-foreground hover:border-border hover:bg-muted/70"
-                  }`}
-                  onClick={() => setMobilePane("fleet")}
-                >
-                  Fleet
-                </button>
-                <button
-                  type="button"
-                  className={`rounded-md border px-2 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.13em] transition ${
-                    mobilePane === "chat"
-                      ? "border-border bg-muted text-foreground shadow-xs"
-                      : "border-border/80 bg-card/65 text-muted-foreground hover:border-border hover:bg-muted/70"
-                  }`}
-                  onClick={() => setMobilePane("chat")}
-                >
-                  Chat
-                </button>
-                <button
-                  type="button"
-                  className={`rounded-md border px-2 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.13em] transition ${
-                    mobilePane === "settings"
-                      ? "border-border bg-muted text-foreground shadow-xs"
-                      : "border-border/80 bg-card/65 text-muted-foreground hover:border-border hover:bg-muted/70"
-                  }`}
-                  onClick={() => setMobilePane("settings")}
-                  disabled={!settingsAgent}
-                >
-                  Settings
-                </button>
-                <button
-                  type="button"
-                  className={`rounded-md border px-2 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.13em] transition ${
-                    mobilePane === "brain"
-                      ? "border-border bg-muted text-foreground shadow-xs"
-                      : "border-border/80 bg-card/65 text-muted-foreground hover:border-border hover:bg-muted/70"
-                  }`}
-                  onClick={() => {
-                    setBrainPanelOpen(true);
-                    setSettingsAgentId(null);
-                    setMobilePane("brain");
-                  }}
-                  disabled={!hasAnyAgents}
-                >
-                  Brain
-                </button>
-              </div>
+          <>
+            {/* ─── Dashboard Stats Bar ─── */}
+            <div className={`hidden w-full xl:block ${sidebarCollapsed ? "xl:hidden" : ""}`}>
+              <StatsBar
+                agentCount={agents.length}
+                runningCount={runningAgentCount}
+                status={status}
+                totalMessages={totalMessages}
+              />
             </div>
+
+            <div className="flex min-h-0 flex-1 flex-col gap-4 pb-16 xl:flex-row xl:pb-0">
+            {/* ─── Collapsible Fleet Sidebar ─── */}
             <div
-              className={`${mobilePane === "fleet" ? "block" : "hidden"} min-h-0 xl:block xl:min-h-0`}
+              className={`${mobilePane === "fleet" ? "block" : "hidden"} min-h-0 transition-all duration-300 ease-in-out xl:block xl:min-h-0 ${
+                sidebarCollapsed ? "xl:w-0 xl:min-w-0 xl:overflow-hidden xl:opacity-0 xl:pointer-events-none xl:p-0 xl:m-0" : ""
+              }`}
+              style={sidebarCollapsed ? { maxWidth: 0, flex: '0 0 0px' } : undefined}
             >
               <FleetSidebar
                 agents={filteredAgents}
@@ -2134,9 +2132,21 @@ const AgentStudioPage = () => {
               />
             </div>
             <div
-              className={`${mobilePane === "chat" ? "flex" : "hidden"} glass-panel min-h-0 flex-1 overflow-hidden p-2 sm:p-3 xl:flex`}
+              className={`${mobilePane === "chat" ? "flex" : "hidden"} glass-panel relative min-h-0 flex-1 overflow-hidden p-2 sm:p-3 xl:flex transition-all duration-300 ease-in-out`}
               data-testid="focused-agent-panel"
             >
+              {/* Expand sidebar button – only visible on desktop when collapsed */}
+              {sidebarCollapsed ? (
+                <button
+                  type="button"
+                  onClick={() => setSidebarCollapsed(false)}
+                  className="absolute left-2 top-2 z-10 hidden xl:flex h-8 w-8 items-center justify-center rounded-md border border-border/70 bg-card/90 text-muted-foreground shadow-sm backdrop-blur transition hover:border-primary/50 hover:bg-primary/10 hover:text-foreground"
+                  title="Show sidebar"
+                  data-testid="expand-sidebar-button"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/></svg>
+                </button>
+              ) : null}
               {focusedAgent ? (
                 <AgentChatPanel
                   agent={focusedAgent}
@@ -2181,7 +2191,7 @@ const AgentStudioPage = () => {
             </div>
             {brainPanelOpen ? (
               <div
-                className={`${mobilePane === "brain" ? "block" : "hidden"} glass-panel min-h-0 w-full shrink-0 overflow-hidden p-0 xl:block xl:min-w-[360px] xl:max-w-[430px]`}
+                className={`${mobilePane === "brain" ? "block" : "hidden"} glass-panel min-h-0 w-full shrink-0 overflow-hidden p-0 xl:block xl:min-w-[360px] xl:max-w-[430px] transition-all duration-300 ease-in-out`}
               >
                 <AgentBrainPanel
                   client={client}
@@ -2196,7 +2206,7 @@ const AgentStudioPage = () => {
             ) : null}
             {settingsAgent ? (
               <div
-                className={`${mobilePane === "settings" ? "block" : "hidden"} glass-panel min-h-0 w-full shrink-0 overflow-hidden p-0 xl:block xl:min-w-[360px] xl:max-w-[430px]`}
+                className={`${mobilePane === "settings" ? "block" : "hidden"} glass-panel min-h-0 w-full shrink-0 overflow-hidden p-0 xl:block xl:min-w-[360px] xl:max-w-[430px] transition-all duration-300 ease-in-out`}
               >
                 <AgentSettingsPanel
                   key={settingsAgent.agentId}
@@ -2237,6 +2247,25 @@ const AgentStudioPage = () => {
               </div>
             ) : null}
           </div>
+
+            {/* ─── Mobile Bottom Nav (replaces old inline toggle) ─── */}
+            <MobileBottomNav
+              activePane={mobilePane}
+              onPaneChange={(pane) => {
+                if (pane === "brain") {
+                  setBrainPanelOpen(true);
+                  setSettingsAgentId(null);
+                }
+                if (pane === "settings" && !settingsAgent && focusedAgent) {
+                  handleOpenAgentSettings(focusedAgent.agentId);
+                }
+                setMobilePane(pane);
+              }}
+              settingsDisabled={!hasAnyAgents}
+              brainDisabled={!hasAnyAgents}
+              hasRunningAgent={hasRunningAgents}
+            />
+          </>
         ) : (
           <div className="glass-panel fade-up-delay flex min-h-0 flex-1 flex-col overflow-hidden p-5 sm:p-6">
             <EmptyStatePanel

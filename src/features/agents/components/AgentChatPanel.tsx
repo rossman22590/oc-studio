@@ -9,6 +9,7 @@ import {
   type KeyboardEvent,
   type MutableRefObject,
 } from "react";
+
 import type { AgentState as AgentRecord } from "@/features/agents/state/store";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -24,6 +25,46 @@ import {
   type AgentChatItem,
 } from "./chatItems";
 import { EmptyStatePanel } from "./EmptyStatePanel";
+
+// Extract image URLs from text (http/https URLs and data URIs)
+const IMAGE_URL_REGEX = /(data:image\/[^;]+;base64,[^\s]+|https?:\/\/[^\s]+\.(jpg|jpeg|png|gif|webp|svg)(?:\?[^\s]*)?\b)/gi;
+
+const extractImageUrls = (text: string): string[] => {
+  const matches = text.match(IMAGE_URL_REGEX);
+  return matches ? [...new Set(matches)] : [];
+};
+
+const renderMessageWithImages = (text: string) => {
+  const imageUrls = extractImageUrls(text);
+  
+  if (imageUrls.length === 0) {
+    return <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>;
+  }
+
+  // Remove image URLs from text for markdown rendering
+  const textWithoutImages = text.replace(IMAGE_URL_REGEX, "").trim();
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap gap-2">
+        {imageUrls.map((url, i) => (
+          <img
+            key={i}
+            src={url}
+            alt="Pasted image"
+            className="max-w-xs h-auto rounded-md border border-border/50"
+            onError={(e) => {
+              (e.target as HTMLImageElement).style.display = "none";
+            }}
+          />
+        ))}
+      </div>
+      {textWithoutImages && (
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{textWithoutImages}</ReactMarkdown>
+      )}
+    </div>
+  );
+};
 
 type AgentChatPanelProps = {
   agent: AgentRecord;
@@ -83,7 +124,7 @@ const AgentChatFinalItems = memo(function AgentChatFinalItems({
               key={`chat-${agentId}-user-${index}`}
               className="rounded-md border border-border/70 bg-muted/70 px-3 py-2 text-foreground"
             >
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{`> ${item.text}`}</ReactMarkdown>
+              {renderMessageWithImages(`> ${item.text}`)}
             </div>
           );
         }
@@ -110,7 +151,7 @@ const AgentChatFinalItems = memo(function AgentChatFinalItems({
             key={`chat-${agentId}-assistant-${index}`}
             className="agent-markdown rounded-md border border-transparent px-0.5"
           >
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.text}</ReactMarkdown>
+            {renderMessageWithImages(item.text)}
           </div>
         );
       })}
@@ -337,6 +378,12 @@ const AgentChatComposer = memo(function AgentChatComposer({
   running,
   sendDisabled,
   inputRef,
+  attachedImages = [],
+  onImageSelect,
+  onRemoveImage,
+  attachedPDFs = [],
+  onRemovePDF,
+  fileInputRef,
 }: {
   value: string;
   onChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
@@ -348,36 +395,100 @@ const AgentChatComposer = memo(function AgentChatComposer({
   running: boolean;
   sendDisabled: boolean;
   inputRef: (el: HTMLTextAreaElement | HTMLInputElement | null) => void;
+  attachedImages?: string[];
+  onImageSelect?: (e: ChangeEvent<HTMLInputElement>) => void;
+  onRemoveImage?: (index: number) => void;
+  attachedPDFs?: Array<{ name: string; content: string }>;
+  onRemovePDF?: (index: number) => void;
+  fileInputRef?: React.RefObject<HTMLInputElement>;
 }) {
   return (
-    <div className="flex items-end gap-2">
-      <textarea
-        ref={inputRef}
-        rows={1}
-        value={value}
-        className="flex-1 resize-none rounded-md border border-border/80 bg-card/75 px-3 py-2 text-[11px] text-foreground outline-none transition focus:border-ring"
-        onChange={onChange}
-        onKeyDown={onKeyDown}
-        placeholder="type a message"
-      />
-      {running ? (
+    <div className="flex flex-col gap-2">
+      {attachedPDFs && attachedPDFs.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {attachedPDFs.map((pdf, index) => (
+            <div
+              key={index}
+              className="relative group inline-flex items-center gap-2 rounded-md bg-primary/15 border border-primary/30 px-3 py-2"
+            >
+              <span className="text-xs font-semibold text-foreground">[Extracted PDF: {pdf.name}]</span>
+              <button
+                type="button"
+                onClick={() => onRemovePDF?.(index)}
+                className="text-xs font-bold text-muted-foreground hover:text-foreground transition"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {attachedImages && attachedImages.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {attachedImages.map((imageData, index) => (
+            <div key={index} className="relative group">
+              <img
+                src={imageData}
+                alt="Attached"
+                className="max-w-[100px] max-h-[100px] rounded-md border border-border/50 object-cover"
+              />
+              <button
+                type="button"
+                onClick={() => onRemoveImage?.(index)}
+                className="absolute -top-2 -right-2 rounded-full bg-destructive p-1 opacity-0 group-hover:opacity-100 transition"
+              >
+                <span className="text-destructive-foreground text-xs">✕</span>
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex items-end gap-2 min-h-0">
+        <textarea
+          ref={inputRef}
+          rows={1}
+          value={value}
+          className="flex-1 resize-none rounded-md border border-border/80 bg-card/75 px-3 py-2 text-[11px] text-foreground outline-none transition focus:border-ring max-h-48 overflow-y-auto"
+          onChange={onChange}
+          onKeyDown={onKeyDown}
+          placeholder="type a message"
+        />
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept="image/*,.pdf"
+          onChange={onImageSelect}
+          className="hidden"
+          data-testid="image-file-input"
+        />
         <button
-          className="rounded-md border border-border/80 bg-card/70 px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground shadow-sm transition hover:bg-muted/70 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none"
           type="button"
-          onClick={onStop}
-          disabled={!canSend || stopBusy}
+          onClick={() => fileInputRef?.current?.click()}
+          className="rounded-md border border-border/80 bg-card/70 px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground shadow-sm transition hover:bg-muted/70"
+          title="Attach image"
         >
-          {stopBusy ? "Stopping" : "Stop"}
+          📎
         </button>
-      ) : null}
-      <button
-        className="rounded-md border border-transparent bg-primary px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-primary-foreground shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none"
-        type="button"
-        onClick={onSend}
-        disabled={sendDisabled}
-      >
-        Send
-      </button>
+        {running ? (
+          <button
+            className="rounded-md border border-border/80 bg-card/70 px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground shadow-sm transition hover:bg-muted/70 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none"
+            type="button"
+            onClick={onStop}
+            disabled={!canSend || stopBusy}
+          >
+            {stopBusy ? "Stopping" : "Stop"}
+          </button>
+        ) : null}
+        <button
+          className="rounded-md border border-transparent bg-primary px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-primary-foreground shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none"
+          type="button"
+          onClick={onSend}
+          disabled={sendDisabled}
+        >
+          Send
+        </button>
+      </div>
     </div>
   );
 });
@@ -397,7 +508,10 @@ export const AgentChatPanel = ({
   onAvatarShuffle,
 }: AgentChatPanelProps) => {
   const [draftValue, setDraftValue] = useState(agent.draft);
+  const [attachedImages, setAttachedImages] = useState<string[]>([]);
+  const [attachedPDFs, setAttachedPDFs] = useState<Array<{ name: string; content: string }>>([]);
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const scrollToBottomNextOutputRef = useRef(false);
   const plainDraftRef = useRef(agent.draft);
   const pendingResizeFrameRef = useRef<number | null>(null);
@@ -405,8 +519,20 @@ export const AgentChatPanel = ({
   const resizeDraft = useCallback(() => {
     const el = draftRef.current;
     if (!el) return;
+    
+    // Reset to auto to measure actual scroll height
     el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
+    
+    // If there's no text, keep it at minimum height (1 row)
+    const hasText = el.value.trim().length > 0;
+    if (!hasText) {
+      el.style.height = "auto"; // Will use rows={1} as minimum
+    } else {
+      // Expand to fit content, but cap at max-height
+      const maxHeight = 192; // 12rem = 192px (matching max-h-48)
+      el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
+    }
+    
     el.style.overflowY = el.scrollHeight > el.clientHeight ? "auto" : "hidden";
   }, []);
 
@@ -441,12 +567,86 @@ export const AgentChatPanel = ({
     (message: string) => {
       if (!canSend || agent.status === "running") return;
       const trimmed = message.trim();
-      if (!trimmed) return;
+      if (!trimmed && attachedImages.length === 0 && attachedPDFs.length === 0) return;
       scrollToBottomNextOutputRef.current = true;
-      onSend(trimmed);
+      
+      let finalMessage = trimmed;
+      
+      // Append image URLs to message
+      if (attachedImages.length > 0) {
+        finalMessage = `${finalMessage}\n\n${attachedImages.join('\n')}`.trim();
+      }
+      
+      // Append PDF content to message
+      if (attachedPDFs.length > 0) {
+        const pdfContent = attachedPDFs.map(pdf => `[PDF: ${pdf.name}]\n${pdf.content}`).join('\n\n');
+        finalMessage = `${finalMessage}\n\n${pdfContent}`.trim();
+      }
+      
+      onSend(finalMessage);
+      setAttachedImages([]);
+      setAttachedPDFs([]);
     },
-    [agent.status, canSend, onSend]
+    [agent.status, canSend, onSend, attachedImages, attachedPDFs]
   );
+
+  const handleImageSelect = useCallback((e: ChangeEvent<HTMLInputElement>) => {
+    const files = e.currentTarget.files;
+    if (!files) return;
+
+    Array.from(files).forEach((file) => {
+      if (file.type.startsWith("image/")) {
+        // Handle image files
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const dataUrl = event.target?.result as string;
+          setAttachedImages((prev) => [...prev, dataUrl]);
+        };
+        reader.readAsDataURL(file);
+      } else if (file.type === "application/pdf") {
+        // Handle PDF files
+        const fileName = file.name;
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          const arrayBuffer = event.target?.result as ArrayBuffer;
+          try {
+            // Dynamically import pdfjs only when needed (client-side only)
+            const pdfjs = await import("pdfjs-dist");
+            pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.js";
+            
+            const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+            let pdfText = "";
+
+            for (let i = 0; i < pdf.numPages; i++) {
+              const page = await pdf.getPage(i + 1);
+              const textContent = await page.getTextContent();
+              const text = textContent.items.map((item: any) => item.str).join(" ");
+              pdfText += text + "\n";
+            }
+
+            // Add extracted PDF to state (not to draft)
+            setAttachedPDFs((prev) => [...prev, { name: fileName, content: pdfText }]);
+          } catch (error) {
+            console.error("Error parsing PDF:", error);
+          }
+        };
+        reader.readAsArrayBuffer(file);
+      }
+    });
+
+    // Reset input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }, []);
+
+  const handleRemoveImage = useCallback((index: number) => {
+    setAttachedImages((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const handleRemovePDF = useCallback((index: number) => {
+    setAttachedPDFs((prev) => prev.filter((_, i) => i !== index));
+  }, []);
 
   const statusColor =
     agent.status === "running"
@@ -725,6 +925,12 @@ export const AgentChatPanel = ({
           stopBusy={stopBusy}
           running={running}
           sendDisabled={sendDisabled}
+          attachedImages={attachedImages}
+          onImageSelect={handleImageSelect}
+          onRemoveImage={handleRemoveImage}
+          attachedPDFs={attachedPDFs}
+          onRemovePDF={handleRemovePDF}
+          fileInputRef={fileInputRef}
         />
       </div>
     </div>
