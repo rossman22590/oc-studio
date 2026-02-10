@@ -17,22 +17,32 @@ export const resolveStudioSettingsPath = () =>
   path.join(resolveStateDir(), SETTINGS_DIRNAME, SETTINGS_FILENAME);
 
 export const loadStudioSettings = (): StudioSettings => {
-  const settingsPath = resolveStudioSettingsPath();
-  if (!fs.existsSync(settingsPath)) {
+  try {
+    const settingsPath = resolveStudioSettingsPath();
+    if (!fs.existsSync(settingsPath)) {
+      return defaultStudioSettings();
+    }
+    const raw = fs.readFileSync(settingsPath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    return normalizeStudioSettings(parsed);
+  } catch (err) {
+    console.warn('[Settings] Failed to load settings file, using defaults:', err);
     return defaultStudioSettings();
   }
-  const raw = fs.readFileSync(settingsPath, "utf8");
-  const parsed = JSON.parse(raw) as unknown;
-  return normalizeStudioSettings(parsed);
 };
 
 export const saveStudioSettings = (next: StudioSettings) => {
-  const settingsPath = resolveStudioSettingsPath();
-  const dir = path.dirname(settingsPath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+  try {
+    const settingsPath = resolveStudioSettingsPath();
+    const dir = path.dirname(settingsPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(settingsPath, JSON.stringify(next, null, 2), "utf8");
+  } catch (err) {
+    // Silently fail in production/serverless environments where filesystem is read-only
+    console.warn('[Settings] Failed to save settings file (using localStorage instead):', err);
   }
-  fs.writeFileSync(settingsPath, JSON.stringify(next, null, 2), "utf8");
 };
 
 export const applyStudioSettingsPatch = (patch: StudioSettingsPatch): StudioSettings => {

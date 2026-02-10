@@ -244,6 +244,10 @@ export class GatewayClient {
     return this.lastHello;
   }
 
+  getStatus() {
+    return this.status;
+  }
+
   private updateStatus(status: GatewayStatus) {
     this.status = status;
     this.statusHandlers.forEach((handler) => handler(status));
@@ -353,10 +357,20 @@ type StudioSettingsCoordinatorLike = {
   flushPending: () => Promise<void>;
 };
 
+// Singleton instance shared across all pages
+let globalGatewayClient: GatewayClient | null = null;
+
+const getOrCreateGatewayClient = (): GatewayClient => {
+  if (!globalGatewayClient) {
+    globalGatewayClient = new GatewayClient();
+  }
+  return globalGatewayClient;
+};
+
 export const useGatewayConnection = (
   settingsCoordinator: StudioSettingsCoordinatorLike
 ): GatewayConnectionState => {
-  const [client] = useState(() => new GatewayClient());
+  const [client] = useState(() => getOrCreateGatewayClient());
   const didAutoConnect = useRef(false);
 
   // IRON CLAD: localStorage is the ONLY source of truth for initial values
@@ -382,12 +396,8 @@ export const useGatewayConnection = (
     });
   }, [client]);
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      client.disconnect();
-    };
-  }, [client]);
+  // DO NOT disconnect on unmount - keep connection alive across page navigations
+  // The singleton client persists across all pages
 
   // Connect function
   const connect = useCallback(async () => {
@@ -399,13 +409,14 @@ export const useGatewayConnection = (
     }
   }, [client, gatewayUrl, token]);
 
-  // Auto-connect on mount if credentials exist
+  // Auto-connect on mount if credentials exist and not already connected
   useEffect(() => {
     if (didAutoConnect.current) return;
     if (!gatewayUrl.trim()) return;
+    if (client.getStatus() === 'connected') return; // Already connected from another page
     didAutoConnect.current = true;
     void connect();
-  }, [connect, gatewayUrl]);
+  }, [connect, gatewayUrl, client]);
 
   // IRON CLAD SAVE: Immediately save to BOTH localStorage AND file on any change
   useEffect(() => {

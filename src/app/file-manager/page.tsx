@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Search, FolderOpen, FileText, Download, ArrowLeft, ChevronRight, X, Code, FileCode } from 'lucide-react';
+import { Search, FolderOpen, FileText, Download, ArrowLeft, ChevronRight, X, Code, FileCode, RefreshCw } from 'lucide-react';
 import { HeaderBar } from '@/features/agents/components/HeaderBar';
 import { ConnectionSettingsModal } from '@/features/agents/components/ConnectionSettingsModal';
 import { useGatewayConnection } from '@/lib/gateway/GatewayClient';
@@ -308,17 +308,27 @@ export default function FileManagerPage() {
             </select>
           </div>
 
-          {/* Search Bar */}
+          {/* Search Bar and Refresh */}
           {selectedAgent && (
-            <div className="relative mb-6">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search files and folders..."
-                className="w-full pl-10 pr-4 py-3 border border-pink-400/50 rounded-lg bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-pink-500 shadow-sm hover:border-pink-500/70 transition-colors"
-              />
+            <div className="flex items-center gap-3 mb-6">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search files and folders..."
+                  className="w-full pl-10 pr-4 py-3 border border-pink-400/50 rounded-lg bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-pink-500 shadow-sm hover:border-pink-500/70 transition-colors"
+                />
+              </div>
+              <button
+                onClick={() => loadFiles(selectedAgent, currentPath)}
+                disabled={loading}
+                className="flex items-center gap-2 px-4 py-3 bg-pink-500/10 hover:bg-pink-500/20 border border-pink-400/50 rounded-lg text-pink-600 dark:text-pink-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+              >
+                <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
             </div>
           )}
 
