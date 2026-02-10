@@ -1720,61 +1720,6 @@ const AgentStudioPage = () => {
               />
             </div>
           <div
-            className={`${mobilePane === "chat" ? "flex" : "hidden"} glass-panel min-h-0 flex-1 overflow-hidden p-2 sm:p-3 xl:flex`}
-            data-testid="focused-agent-panel"
-          >
-            {focusedAgent ? (
-              <AgentChatPanel
-                agent={focusedAgent}
-                isSelected={false}
-                canSend={status === "connected"}
-                models={gatewayModels}
-                stopBusy={stopBusyAgentId === focusedAgent.agentId}
-                onOpenSettings={() => handleOpenAgentSettings(focusedAgent.agentId)}
-                onModelChange={(value) =>
-                  handleModelChange(focusedAgent.agentId, focusedAgent.sessionKey, value)
-                }
-                onThinkingChange={(value) =>
-                  handleThinkingChange(focusedAgent.agentId, focusedAgent.sessionKey, value)
-                }
-                onDraftChange={(value) => handleDraftChange(focusedAgent.agentId, value)}
-                onSend={(message) =>
-                  handleSend(focusedAgent.agentId, focusedAgent.sessionKey, message)
-                }
-                onStopRun={() => handleStopRun(focusedAgent.agentId, focusedAgent.sessionKey)}
-                onAvatarShuffle={() => handleAvatarShuffle(focusedAgent.agentId)}
-              />
-            ) : (
-              <EmptyStatePanel
-                title={hasAnyAgents ? "No agents match this filter." : "No agents available."}
-                description={
-                  hasAnyAgents
-                    ? undefined
-                    : status === "connected"
-                      ? "Use New Agent in the sidebar to add your first agent."
-                      : "Connect to your gateway to load agents into the studio."
-                }
-                fillHeight
-                className="items-center p-6 text-center text-sm"
-              />
-            )}
-          </div>
-          {brainPanelOpen ? (
-            <div
-              className={`${mobilePane === "brain" ? "block" : "hidden"} glass-panel min-h-0 w-full shrink-0 overflow-hidden p-0 xl:block xl:min-w-[360px] xl:max-w-[430px]`}
-            >
-              <AgentBrainPanel
-                client={client}
-                agents={agents}
-                selectedAgentId={selectedBrainAgentId}
-                onClose={() => {
-                  setBrainPanelOpen(false);
-                  setMobilePane("chat");
-                }}
-              />
-            </div>
-          ) : null}
-          <div
             className={`${mobilePane === "chat" ? "flex" : "hidden"} glass-panel relative min-h-0 flex-1 overflow-hidden p-2 sm:p-3 xl:flex transition-all duration-300 ease-in-out`}
             data-testid="focused-agent-panel"
           >
