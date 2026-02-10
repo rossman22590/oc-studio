@@ -13,7 +13,6 @@ import { EmptyStatePanel } from "@/features/agents/components/EmptyStatePanel";
 import { StatsBar, ActivityFeed, AgentQuickCards, MobileBottomNav } from "@/features/agents/components/dashboard";
 import type { ActivityEntry } from "@/features/agents/components/dashboard";
 import {
-  buildAgentInstruction,
   extractText,
   isHeartbeatPrompt,
   stripUiMetadata,
@@ -24,7 +23,6 @@ import {
   buildGatewayModelChoices,
   type GatewayModelChoice,
   type GatewayModelPolicySnapshot,
-  resolveConfiguredModelKey,
 } from "@/lib/gateway/models";
 import {
   AgentStoreProvider,
@@ -38,10 +36,9 @@ import {
   buildHistorySyncPatch,
   buildSummarySnapshotPatches,
   type SummaryPreviewSnapshot,
-  type SummarySnapshotAgent,
   type SummaryStatusSnapshot,
 } from "@/features/agents/state/runtimeEventBridge";
-import type { AgentStoreSeed, AgentState } from "@/features/agents/state/store";
+import type { AgentState } from "@/features/agents/state/store";
 import { createGatewayRuntimeEventHandler } from "@/features/agents/state/gatewayRuntimeEventHandler";
 import {
   type CronJobSummary,
@@ -49,13 +46,11 @@ import {
   formatCronJobDisplay,
   listCronJobs,
   removeCronJob,
-  removeCronJobsForAgent,
   resolveLatestCronJobForAgent,
   runCronJobNow,
 } from "@/lib/cron/types";
 import {
   createGatewayAgent,
-  deleteGatewayAgent,
   renameGatewayAgent,
   removeGatewayHeartbeatOverride,
   listHeartbeatsForAgent,
@@ -64,23 +59,20 @@ import {
 } from "@/lib/gateway/agentConfig";
 import { buildAvatarDataUrl } from "@/lib/avatars/multiavatar";
 import { createStudioSettingsCoordinator } from "@/lib/studio/coordinator";
-import { resolveAgentAvatarSeed, resolveFocusedPreference } from "@/lib/studio/settings";
+import { resolveFocusedPreference } from "@/lib/studio/settings";
 import { applySessionSettingMutation } from "@/features/agents/state/sessionSettingsMutations";
 import {
-  buildAgentMainSessionKey,
-  isSameSessionKey,
   parseAgentIdFromSessionKey,
   isGatewayDisconnectLikeError,
-  syncGatewaySessionSettings,
   type EventFrame,
 } from "@/lib/gateway/GatewayClient";
 import { fetchJson } from "@/lib/http";
 import { bootstrapAgentBrainFilesFromTemplate, initializeAgentWorkspace } from "@/lib/gateway/agentFiles";
-import {
-  runDeleteAgentTransaction,
-  type RestoreAgentStateResult,
-  type TrashAgentStateResult,
-} from "@/features/agents/operations/deleteAgentTransaction";
+import { deleteAgentViaStudio } from "@/features/agents/operations/deleteAgentOperation";
+import { sendChatMessageViaStudio } from "@/features/agents/operations/chatSendOperation";
+import { hydrateAgentFleetFromGateway } from "@/features/agents/operations/agentFleetHydration";
+import { useConfigMutationQueue } from "@/features/agents/operations/useConfigMutationQueue";
+import { useGatewayRestartBlock } from "@/features/agents/operations/useGatewayRestartBlock";
 
 type ChatHistoryMessage = Record<string, unknown>;
 
@@ -89,23 +81,6 @@ type ChatHistoryResult = {
   sessionId?: string;
   messages: ChatHistoryMessage[];
   thinkingLevel?: string;
-};
-
-type AgentsListResult = {
-  defaultId: string;
-  mainKey: string;
-  scope?: string;
-  agents: Array<{
-    id: string;
-    name?: string;
-    identity?: {
-      name?: string;
-      theme?: string;
-      emoji?: string;
-      avatar?: string;
-      avatarUrl?: string;
-    };
-  }>;
 };
 
 type SessionsListEntry = {
@@ -146,15 +121,6 @@ type RenameAgentBlockState = {
   phase: RenameAgentBlockPhase;
   startedAt: number;
   sawDisconnect: boolean;
-};
-type ConfigMutationKind = "create-agent" | "rename-agent" | "delete-agent";
-type QueuedConfigMutation = {
-  id: string;
-  kind: ConfigMutationKind;
-  label: string;
-  run: () => Promise<void>;
-  resolve: () => void;
-  reject: (error: unknown) => void;
 };
 
 const RESERVED_MAIN_AGENT_ID = "main";
@@ -254,10 +220,6 @@ const AgentStudioPage = () => {
   const [deleteAgentBlock, setDeleteAgentBlock] = useState<DeleteAgentBlockState | null>(null);
   const [createAgentBlock, setCreateAgentBlock] = useState<CreateAgentBlockState | null>(null);
   const [renameAgentBlock, setRenameAgentBlock] = useState<RenameAgentBlockState | null>(null);
-  const [queuedConfigMutations, setQueuedConfigMutations] = useState<QueuedConfigMutation[]>([]);
-  const [activeConfigMutation, setActiveConfigMutation] = useState<QueuedConfigMutation | null>(
-    null
-  );
   const specialUpdateRef = useRef<Map<string, string>>(new Map());
   const specialUpdateInFlightRef = useRef<Set<string>>(new Set());
   const pendingDraftValuesRef = useRef<Map<string, string>>(new Map());
@@ -306,7 +268,19 @@ const AgentStudioPage = () => {
     [agents]
   );
   const hasRunningAgents = runningAgentCount > 0;
-  const queuedConfigMutationCount = queuedConfigMutations.length;
+
+  const hasRestartBlockInProgress = Boolean(
+    (deleteAgentBlock && deleteAgentBlock.phase !== "queued") ||
+      (createAgentBlock && createAgentBlock.phase !== "queued") ||
+      (renameAgentBlock && renameAgentBlock.phase !== "queued")
+  );
+
+  const { enqueueConfigMutation, queuedCount: queuedConfigMutationCount, activeConfigMutation } =
+    useConfigMutationQueue({
+      status,
+      hasRunningAgents,
+      hasRestartBlockInProgress,
+    });
 
   /* ─── Dashboard: Activity feed ─── */
   const [activityEntries, setActivityEntries] = useState<ActivityEntry[]>([]);
@@ -403,26 +377,6 @@ const AgentStudioPage = () => {
     pendingLivePatchesRef.current.set(key, existing ? { ...existing, ...patch } : patch);
     livePatchBatcherRef.current.schedule();
   }, []);
-
-  const enqueueConfigMutation = useCallback(
-    (params: {
-      kind: ConfigMutationKind;
-      label: string;
-      run: () => Promise<void>;
-    }) =>
-      new Promise<void>((resolve, reject) => {
-        const queued: QueuedConfigMutation = {
-          id: crypto.randomUUID(),
-          kind: params.kind,
-          label: params.label,
-          run: params.run,
-          resolve,
-          reject,
-        };
-        setQueuedConfigMutations((current) => [...current, queued]);
-      }),
-    []
-  );
 
   useEffect(() => {
     const selector = 'link[data-agent-favicon="true"]';
@@ -603,207 +557,38 @@ const AgentStudioPage = () => {
     }
   }, [updateSpecialLatestUpdate]);
 
-  const resolveAgentName = useCallback((agent: AgentsListResult["agents"][number]) => {
-    const fromList = typeof agent.name === "string" ? agent.name.trim() : "";
-    if (fromList) return fromList;
-    const fromIdentity =
-      typeof agent.identity?.name === "string" ? agent.identity.name.trim() : "";
-    if (fromIdentity) return fromIdentity;
-    return agent.id;
-  }, []);
-
-  const resolveAgentAvatarUrl = useCallback(
-    (agent: AgentsListResult["agents"][number]) => {
-      const candidate = agent.identity?.avatarUrl ?? agent.identity?.avatar ?? null;
-      if (typeof candidate !== "string") return null;
-      const trimmed = candidate.trim();
-      if (!trimmed) return null;
-      if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed;
-      if (trimmed.startsWith("data:image/")) return trimmed;
-      return null;
-    },
-    []
-  );
-
-  const resolveDefaultModelForAgent = useCallback(
-    (agentId: string, snapshot: GatewayModelPolicySnapshot | null): string | null => {
-      const resolvedAgentId = agentId.trim();
-      if (!resolvedAgentId) return null;
-      const defaults = snapshot?.config?.agents?.defaults;
-      const modelAliases = defaults?.models;
-      const agentEntry =
-        snapshot?.config?.agents?.list?.find((entry) => entry?.id?.trim() === resolvedAgentId) ??
-        null;
-      const agentModel = agentEntry?.model;
-      let raw: string | null = null;
-      if (typeof agentModel === "string") {
-        raw = agentModel;
-      } else if (agentModel && typeof agentModel === "object") {
-        raw = agentModel.primary ?? null;
-      }
-      if (!raw) {
-        const defaultModel = defaults?.model;
-        if (typeof defaultModel === "string") {
-          raw = defaultModel;
-        } else if (defaultModel && typeof defaultModel === "object") {
-          raw = defaultModel.primary ?? null;
-        }
-      }
-      if (!raw) return null;
-      return resolveConfiguredModelKey(raw, modelAliases);
-    },
-    []
-  );
-
   const loadAgents = useCallback(async () => {
     if (status !== "connected") return;
     setLoading(true);
     try {
-      let configSnapshot = gatewayConfigSnapshot;
-      if (!configSnapshot) {
-        try {
-          configSnapshot = await client.call<GatewayModelPolicySnapshot>("config.get", {});
-          setGatewayConfigSnapshot(configSnapshot);
-        } catch (err) {
-          if (!isGatewayDisconnectLikeError(err)) {
-            console.error("Failed to load gateway config while loading agents.", err);
-          }
-        }
-      }
-      const gatewayKey = gatewayUrl.trim();
-      let settings: Awaited<ReturnType<typeof settingsCoordinator.loadSettings>> | null = null;
-      if (gatewayKey) {
-        try {
-          settings = await settingsCoordinator.loadSettings();
-        } catch (err) {
-          console.error("Failed to load studio settings while loading agents.", err);
-        }
-      }
-      const agentsResult = await client.call<AgentsListResult>("agents.list", {});
-      const mainKey = agentsResult.mainKey?.trim() || "main";
-      const mainSessionKeyByAgent = new Map<string, SessionsListEntry | null>();
-      await Promise.all(
-        agentsResult.agents.map(async (agent) => {
-          try {
-            const expectedMainKey = buildAgentMainSessionKey(agent.id, mainKey);
-            const sessions = await client.call<SessionsListResult>("sessions.list", {
-              agentId: agent.id,
-              includeGlobal: false,
-              includeUnknown: false,
-              search: expectedMainKey,
-              limit: 4,
-            });
-            const entries = Array.isArray(sessions.sessions) ? sessions.sessions : [];
-            const mainEntry =
-              entries.find((entry) => isSameSessionKey(entry.key ?? "", expectedMainKey)) ?? null;
-            mainSessionKeyByAgent.set(agent.id, mainEntry);
-          } catch (err) {
-            if (!isGatewayDisconnectLikeError(err)) {
-              console.error("Failed to list sessions while resolving agent session.", err);
-            }
-            mainSessionKeyByAgent.set(agent.id, null);
-          }
-        })
-      );
-      const seeds: AgentStoreSeed[] = agentsResult.agents.map((agent) => {
-        const persistedSeed =
-          settings && gatewayKey ? resolveAgentAvatarSeed(settings, gatewayKey, agent.id) : null;
-        const avatarSeed = persistedSeed ?? agent.id;
-        const avatarUrl = resolveAgentAvatarUrl(agent);
-        const name = resolveAgentName(agent);
-        const mainSession = mainSessionKeyByAgent.get(agent.id) ?? null;
-        const modelProvider =
-          typeof mainSession?.modelProvider === "string" ? mainSession.modelProvider.trim() : "";
-        const modelId = typeof mainSession?.model === "string" ? mainSession.model.trim() : "";
-        const model =
-          modelProvider && modelId
-            ? `${modelProvider}/${modelId}`
-            : resolveDefaultModelForAgent(agent.id, configSnapshot);
-        const thinkingLevel =
-          typeof mainSession?.thinkingLevel === "string" ? mainSession.thinkingLevel : null;
-        return {
-          agentId: agent.id,
-          name,
-          sessionKey: buildAgentMainSessionKey(agent.id, mainKey),
-          avatarSeed,
-          avatarUrl,
-          model,
-          thinkingLevel,
-        };
+      const result = await hydrateAgentFleetFromGateway({
+        client,
+        gatewayUrl,
+        cachedConfigSnapshot: gatewayConfigSnapshot,
+        loadStudioSettings: () => settingsCoordinator.loadSettings(),
+        isDisconnectLikeError: isGatewayDisconnectLikeError,
+        logError: (message, error) => console.error(message, error),
       });
-      hydrateAgents(seeds);
-      for (const seed of seeds) {
-        const mainSession = mainSessionKeyByAgent.get(seed.agentId) ?? null;
-        if (!mainSession) continue;
+      if (!gatewayConfigSnapshot && result.configSnapshot) {
+        setGatewayConfigSnapshot(result.configSnapshot);
+      }
+      hydrateAgents(result.seeds);
+      for (const agentId of result.sessionCreatedAgentIds) {
         dispatch({
           type: "updateAgent",
-          agentId: seed.agentId,
+          agentId,
           patch: { sessionCreated: true, sessionSettingsSynced: true },
         });
       }
-
-      try {
-        const activeAgents: SummarySnapshotAgent[] = [];
-        for (const seed of seeds) {
-          const mainSession = mainSessionKeyByAgent.get(seed.agentId) ?? null;
-          if (!mainSession) continue;
-          activeAgents.push({
-            agentId: seed.agentId,
-            sessionKey: seed.sessionKey,
-            status: "idle",
-          });
-        }
-        const sessionKeys = Array.from(
-          new Set(
-            activeAgents
-              .map((agent) => agent.sessionKey)
-              .filter((key): key is string => typeof key === "string" && key.trim().length > 0)
-          )
-        ).slice(0, 64);
-        if (sessionKeys.length > 0) {
-          const [statusSummary, previewResult] = await Promise.all([
-            client.call<SummaryStatusSnapshot>("status", {}),
-            client.call<SummaryPreviewSnapshot>("sessions.preview", {
-              keys: sessionKeys,
-              limit: 8,
-              maxChars: 240,
-            }),
-          ]);
-          const patches = buildSummarySnapshotPatches({
-            agents: activeAgents,
-            statusSummary,
-            previewResult,
-          });
-          const assistantAtByAgentId = new Map<string, number>();
-          for (const entry of patches) {
-            if (typeof entry.patch.lastAssistantMessageAt === "number") {
-              assistantAtByAgentId.set(entry.agentId, entry.patch.lastAssistantMessageAt);
-            }
-          }
-          for (const entry of patches) {
-            dispatch({
-              type: "updateAgent",
-              agentId: entry.agentId,
-              patch: entry.patch,
-            });
-          }
-
-          let bestAgentId: string | null = seeds[0]?.agentId ?? null;
-          let bestTs = bestAgentId ? (assistantAtByAgentId.get(bestAgentId) ?? 0) : 0;
-          for (const seed of seeds) {
-            const ts = assistantAtByAgentId.get(seed.agentId) ?? 0;
-            if (ts <= bestTs) continue;
-            bestTs = ts;
-            bestAgentId = seed.agentId;
-          }
-          if (bestAgentId) {
-            dispatch({ type: "selectAgent", agentId: bestAgentId });
-          }
-        }
-      } catch (err) {
-        if (!isGatewayDisconnectLikeError(err)) {
-          console.error("Failed to load initial summary snapshot.", err);
-        }
+      for (const entry of result.summaryPatches) {
+        dispatch({
+          type: "updateAgent",
+          agentId: entry.agentId,
+          patch: entry.patch,
+        });
+      }
+      if (result.suggestedSelectedAgentId) {
+        dispatch({ type: "selectAgent", agentId: result.suggestedSelectedAgentId });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load agents.";
@@ -816,9 +601,6 @@ const AgentStudioPage = () => {
     client,
     dispatch,
     hydrateAgents,
-    resolveAgentAvatarUrl,
-    resolveAgentName,
-    resolveDefaultModelForAgent,
     setError,
     setLoading,
     gatewayUrl,
@@ -835,48 +617,6 @@ const AgentStudioPage = () => {
     if (status === "connected") return;
     setAgentsLoadedOnce(false);
   }, [gatewayUrl, status]);
-
-	  useEffect(() => {
-	    if (status !== "connected") return;
-	    if (activeConfigMutation) return;
-	    if (deleteAgentBlock && deleteAgentBlock.phase !== "queued") return;
-	    if (createAgentBlock && createAgentBlock.phase !== "queued") return;
-	    if (renameAgentBlock && renameAgentBlock.phase !== "queued") return;
-	    if (hasRunningAgents) return;
-	    const next = queuedConfigMutations[0];
-	    if (!next) return;
-	    setQueuedConfigMutations((current) => current.slice(1));
-	    setActiveConfigMutation(next);
-	  }, [
-	    activeConfigMutation,
-	    createAgentBlock,
-	    deleteAgentBlock,
-	    renameAgentBlock,
-	    hasRunningAgents,
-	    queuedConfigMutations,
-	    status,
-	  ]);
-
-  useEffect(() => {
-    if (!activeConfigMutation) return;
-    let mounted = true;
-    const run = async () => {
-      try {
-        await activeConfigMutation.run();
-        activeConfigMutation.resolve();
-      } catch (error) {
-        activeConfigMutation.reject(error);
-      } finally {
-        if (mounted) {
-          setActiveConfigMutation(null);
-        }
-      }
-    };
-    void run();
-    return () => {
-      mounted = false;
-    };
-  }, [activeConfigMutation]);
 
   useEffect(() => {
     let cancelled = false;
@@ -924,7 +664,8 @@ const AgentStudioPage = () => {
 
   useEffect(() => {
     const key = gatewayUrl.trim();
-    if (!focusedPreferencesLoaded || !key) return;
+    if (!key) return;
+    if (!focusFilterTouchedRef.current) return;
     settingsCoordinator.schedulePatch(
       {
         focused: {
@@ -936,7 +677,7 @@ const AgentStudioPage = () => {
       },
       300
     );
-  }, [focusFilter, focusedPreferencesLoaded, gatewayUrl, settingsCoordinator]);
+  }, [focusFilter, gatewayUrl, settingsCoordinator]);
 
   useEffect(() => {
     if (status !== "connected" || !focusedPreferencesLoaded) return;
@@ -1223,40 +964,12 @@ const AgentStudioPage = () => {
                 phase: "deleting",
               };
             });
-            await runDeleteAgentTransaction(
-              {
-                trashAgentState: async (agentId) => {
-                  const { result } = await fetchJson<{ result: TrashAgentStateResult }>(
-                    "/api/gateway/agent-state",
-                    {
-                      method: "POST",
-                      headers: { "content-type": "application/json" },
-                      body: JSON.stringify({ agentId, gatewayUrl }),
-                    }
-                  );
-                  return result;
-                },
-                restoreAgentState: async (agentId, trashDir) => {
-                  const { result } = await fetchJson<{ result: RestoreAgentStateResult }>(
-                    "/api/gateway/agent-state",
-                    {
-                      method: "PUT",
-                      headers: { "content-type": "application/json" },
-                      body: JSON.stringify({ agentId, trashDir, gatewayUrl }),
-                    }
-                  );
-                  return result;
-                },
-                removeCronJobsForAgent: async (agentId) => {
-                  await removeCronJobsForAgent(client, agentId);
-                },
-                deleteGatewayAgent: async (agentId) => {
-                  await deleteGatewayAgent({ client, agentId });
-                },
-                logError: (message, error) => console.error(message, error),
-              },
-              agentId
-            );
+            await deleteAgentViaStudio({
+              client,
+              agentId,
+              fetchJson,
+              logError: (message, error) => console.error(message, error),
+            });
             setSettingsAgentId(null);
             setDeleteAgentBlock((current) => {
               if (!current || current.agentId !== agentId) return current;
@@ -1285,47 +998,22 @@ const AgentStudioPage = () => {
     ]
   );
 
-  useEffect(() => {
-    if (!deleteAgentBlock || deleteAgentBlock.phase !== "awaiting-restart") return;
-    if (status !== "connected") {
-      if (!deleteAgentBlock.sawDisconnect) {
-        setDeleteAgentBlock((current) => {
-          if (!current || current.phase !== "awaiting-restart" || current.sawDisconnect) {
-            return current;
-          }
-          return { ...current, sawDisconnect: true };
-        });
-      }
-      return;
-    }
-    if (!deleteAgentBlock.sawDisconnect) return;
-    let cancelled = false;
-    const finalize = async () => {
-      await loadAgents();
-      if (cancelled) return;
-      setDeleteAgentBlock(null);
-      setMobilePane("chat");
-    };
-    void finalize();
-    return () => {
-      cancelled = true;
-    };
-  }, [deleteAgentBlock, loadAgents, status]);
-
-  useEffect(() => {
-    if (!deleteAgentBlock) return;
-    if (deleteAgentBlock.phase === "queued") return;
-    const maxWaitMs = 90_000;
-    const elapsed = Date.now() - deleteAgentBlock.startedAt;
-    const remaining = Math.max(0, maxWaitMs - elapsed);
-    const timeoutId = window.setTimeout(() => {
+  useGatewayRestartBlock({
+    status,
+    block: deleteAgentBlock,
+    setBlock: setDeleteAgentBlock,
+    maxWaitMs: 90_000,
+    onTimeout: () => {
       setDeleteAgentBlock(null);
       setError("Gateway restart timed out after deleting the agent.");
-    }, remaining);
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [deleteAgentBlock, setError]);
+    },
+    onRestartComplete: async (_, ctx) => {
+      await loadAgents();
+      if (ctx.isCancelled()) return;
+      setDeleteAgentBlock(null);
+      setMobilePane("chat");
+    },
+  });
 
   const handleRunCronJob = useCallback(
     async (agentId: string, jobId: string) => {
@@ -1508,38 +1196,38 @@ const AgentStudioPage = () => {
       }
       return;
     }
-	    if (!createAgentBlock.sawDisconnect) return;
-	    let cancelled = false;
-	    const finalize = async () => {
-	      await loadAgents();
-	      if (cancelled) return;
-	      const newAgentId = createAgentBlock.agentId?.trim() ?? "";
-	      if (newAgentId) {
-	        dispatch({ type: "selectAgent", agentId: newAgentId });
-	        setCreateAgentBlock((current) => {
-	          if (!current || current.agentId !== newAgentId) return current;
-	          return { ...current, phase: "bootstrapping-files" };
-	        });
-	        try {
-	          await initializeAgentWorkspace({ client, agentId: newAgentId });
-	          await bootstrapAgentBrainFilesFromTemplate({ client, agentId: newAgentId });
-	        } catch (err) {
-	          const message =
-	            err instanceof Error
-	              ? err.message
-	              : "Failed to bootstrap brain files for the new agent.";
-	          console.error(message, err);
-	          setError(message);
-	        }
-	      }
-	      setCreateAgentBlock(null);
-	      setMobilePane("chat");
-	    };
-	    void finalize();
-	    return () => {
-	      cancelled = true;
-	    };
-	  }, [client, createAgentBlock, dispatch, loadAgents, setError, status]);
+    if (!createAgentBlock.sawDisconnect) return;
+    let cancelled = false;
+    const finalize = async () => {
+      await loadAgents();
+      if (cancelled) return;
+      const newAgentId = createAgentBlock.agentId?.trim() ?? "";
+      if (newAgentId) {
+        dispatch({ type: "selectAgent", agentId: newAgentId });
+        setCreateAgentBlock((current) => {
+          if (!current || current.agentId !== newAgentId) return current;
+          return { ...current, phase: "bootstrapping-files" };
+        });
+        try {
+          await initializeAgentWorkspace({ client, agentId: newAgentId });
+          await bootstrapAgentBrainFilesFromTemplate({ client, agentId: newAgentId });
+        } catch (err) {
+          const message =
+            err instanceof Error
+              ? err.message
+              : "Failed to bootstrap brain files for the new agent.";
+          console.error(message, err);
+          setError(message);
+        }
+      }
+      setCreateAgentBlock(null);
+      setMobilePane("chat");
+    };
+    void finalize();
+    return () => {
+      cancelled = true;
+    };
+  }, [client, createAgentBlock, dispatch, loadAgents, setError, status]);
 
   useEffect(() => {
     if (!createAgentBlock) return;
@@ -1551,52 +1239,25 @@ const AgentStudioPage = () => {
       setCreateAgentBlock(null);
       setError("Gateway restart timed out after creating the agent.");
     }, remaining);
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
+    return () => window.clearTimeout(timeoutId);
   }, [createAgentBlock, setError]);
 
-  useEffect(() => {
-    if (!renameAgentBlock || renameAgentBlock.phase !== "awaiting-restart") return;
-    if (status !== "connected") {
-      if (!renameAgentBlock.sawDisconnect) {
-        setRenameAgentBlock((current) => {
-          if (!current || current.phase !== "awaiting-restart" || current.sawDisconnect) {
-            return current;
-          }
-          return { ...current, sawDisconnect: true };
-        });
-      }
-      return;
-    }
-    if (!renameAgentBlock.sawDisconnect) return;
-    let cancelled = false;
-    const finalize = async () => {
-      await loadAgents();
-      if (cancelled) return;
-      setRenameAgentBlock(null);
-      setMobilePane("chat");
-    };
-    void finalize();
-    return () => {
-      cancelled = true;
-    };
-  }, [loadAgents, renameAgentBlock, status]);
-
-  useEffect(() => {
-    if (!renameAgentBlock) return;
-    if (renameAgentBlock.phase === "queued") return;
-    const maxWaitMs = 90_000;
-    const elapsed = Date.now() - renameAgentBlock.startedAt;
-    const remaining = Math.max(0, maxWaitMs - elapsed);
-    const timeoutId = window.setTimeout(() => {
+  useGatewayRestartBlock({
+    status,
+    block: renameAgentBlock,
+    setBlock: setRenameAgentBlock,
+    maxWaitMs: 90_000,
+    onTimeout: () => {
       setRenameAgentBlock(null);
       setError("Gateway restart timed out after renaming the agent.");
-    }, remaining);
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [renameAgentBlock, setError]);
+    },
+    onRestartComplete: async (_, ctx) => {
+      await loadAgents();
+      if (ctx.isCancelled()) return;
+      setRenameAgentBlock(null);
+      setMobilePane("chat");
+    },
+  });
 
   const handleNewSession = useCallback(
     async (agentId: string) => {
@@ -1661,89 +1322,16 @@ const AgentStudioPage = () => {
         pendingDraftTimersRef.current.delete(agentId);
       }
       pendingDraftValuesRef.current.delete(agentId);
-      const isResetCommand = /^\/(reset|new)(\s|$)/i.test(trimmed);
-      const runId = crypto.randomUUID();
-      runtimeEventHandlerRef.current?.clearRunTracking(runId);
-      const agent = stateRef.current.agents.find((entry) => entry.agentId === agentId);
-      if (!agent) {
-        dispatch({
-          type: "appendOutput",
-          agentId,
-          line: "Error: Agent not found.",
-        });
-        return;
-      }
-      if (isResetCommand) {
-        dispatch({
-          type: "updateAgent",
-          agentId,
-          patch: { outputLines: [], streamText: null, thinkingTrace: null, lastResult: null },
-        });
-      }
-      dispatch({
-        type: "updateAgent",
+      await sendChatMessageViaStudio({
+        client,
+        dispatch,
+        getAgent: (agentId) =>
+          stateRef.current.agents.find((entry) => entry.agentId === agentId) ?? null,
         agentId,
-        patch: {
-          status: "running",
-          runId,
-          streamText: "",
-          thinkingTrace: null,
-          draft: "",
-          lastUserMessage: trimmed,
-          lastActivityAt: Date.now(),
-        },
+        sessionKey,
+        message: trimmed,
+        clearRunTracking: (runId) => runtimeEventHandlerRef.current?.clearRunTracking(runId),
       });
-      dispatch({
-        type: "appendOutput",
-        agentId,
-        line: `> ${trimmed}`,
-      });
-      pushActivity(agent.name, `Sent: ${trimmed.slice(0, 60)}${trimmed.length > 60 ? "…" : ""}`, "running");
-      try {
-        if (!sessionKey) {
-          throw new Error("Missing session key for agent.");
-        }
-        let createdSession = agent.sessionCreated;
-        if (!agent.sessionSettingsSynced) {
-          await syncGatewaySessionSettings({
-            client,
-            sessionKey,
-            model: agent.model ?? null,
-            thinkingLevel: agent.thinkingLevel ?? null,
-          });
-          createdSession = true;
-          dispatch({
-            type: "updateAgent",
-            agentId,
-            patch: { sessionSettingsSynced: true, sessionCreated: true },
-          });
-        }
-        await client.call("chat.send", {
-          sessionKey,
-          message: buildAgentInstruction({ message: trimmed }),
-          deliver: false,
-          idempotencyKey: runId,
-        });
-        if (!createdSession) {
-          dispatch({
-            type: "updateAgent",
-            agentId,
-            patch: { sessionCreated: true },
-          });
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Gateway error";
-        dispatch({
-          type: "updateAgent",
-          agentId,
-          patch: { status: "error", runId: null, streamText: null, thinkingTrace: null },
-        });
-        dispatch({
-          type: "appendOutput",
-          agentId,
-          line: `Error: ${msg}`,
-        });
-      }
     },
     [client, dispatch]
   );
@@ -2131,84 +1719,139 @@ const AgentStudioPage = () => {
                 }}
               />
             </div>
+          <div
+            className={`${mobilePane === "chat" ? "flex" : "hidden"} glass-panel min-h-0 flex-1 overflow-hidden p-2 sm:p-3 xl:flex`}
+            data-testid="focused-agent-panel"
+          >
+            {focusedAgent ? (
+              <AgentChatPanel
+                agent={focusedAgent}
+                isSelected={false}
+                canSend={status === "connected"}
+                models={gatewayModels}
+                stopBusy={stopBusyAgentId === focusedAgent.agentId}
+                onOpenSettings={() => handleOpenAgentSettings(focusedAgent.agentId)}
+                onModelChange={(value) =>
+                  handleModelChange(focusedAgent.agentId, focusedAgent.sessionKey, value)
+                }
+                onThinkingChange={(value) =>
+                  handleThinkingChange(focusedAgent.agentId, focusedAgent.sessionKey, value)
+                }
+                onDraftChange={(value) => handleDraftChange(focusedAgent.agentId, value)}
+                onSend={(message) =>
+                  handleSend(focusedAgent.agentId, focusedAgent.sessionKey, message)
+                }
+                onStopRun={() => handleStopRun(focusedAgent.agentId, focusedAgent.sessionKey)}
+                onAvatarShuffle={() => handleAvatarShuffle(focusedAgent.agentId)}
+              />
+            ) : (
+              <EmptyStatePanel
+                title={hasAnyAgents ? "No agents match this filter." : "No agents available."}
+                description={
+                  hasAnyAgents
+                    ? undefined
+                    : status === "connected"
+                      ? "Use New Agent in the sidebar to add your first agent."
+                      : "Connect to your gateway to load agents into the studio."
+                }
+                fillHeight
+                className="items-center p-6 text-center text-sm"
+              />
+            )}
+          </div>
+          {brainPanelOpen ? (
             <div
-              className={`${mobilePane === "chat" ? "flex" : "hidden"} glass-panel relative min-h-0 flex-1 overflow-hidden p-2 sm:p-3 xl:flex transition-all duration-300 ease-in-out`}
-              data-testid="focused-agent-panel"
+              className={`${mobilePane === "brain" ? "block" : "hidden"} glass-panel min-h-0 w-full shrink-0 overflow-hidden p-0 xl:block xl:min-w-[360px] xl:max-w-[430px]`}
             >
-              {/* Expand sidebar button – only visible on desktop when collapsed */}
-              {sidebarCollapsed ? (
-                <button
-                  type="button"
-                  onClick={() => setSidebarCollapsed(false)}
-                  className="absolute left-2 top-2 z-10 hidden xl:flex h-8 w-8 items-center justify-center rounded-md border border-border/70 bg-card/90 text-muted-foreground shadow-sm backdrop-blur transition hover:border-primary/50 hover:bg-primary/10 hover:text-foreground"
-                  title="Show sidebar"
-                  data-testid="expand-sidebar-button"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/></svg>
-                </button>
-              ) : null}
-              {focusedAgent ? (
-                <AgentChatPanel
-                  agent={focusedAgent}
-                  isSelected={false}
-                  canSend={status === "connected"}
-                  models={gatewayModels}
-                  stopBusy={stopBusyAgentId === focusedAgent.agentId}
-                  onOpenSettings={() => handleOpenAgentSettings(focusedAgent.agentId)}
-                  onModelChange={(value) =>
-                    handleModelChange(focusedAgent.agentId, focusedAgent.sessionKey, value)
-                  }
-                  onThinkingChange={(value) =>
-                    handleThinkingChange(focusedAgent.agentId, focusedAgent.sessionKey, value)
-                  }
-                  onDraftChange={(value) =>
-                    handleDraftChange(focusedAgent.agentId, value)
-                  }
-                  onSend={(message) =>
-                    handleSend(
-                      focusedAgent.agentId,
-                      focusedAgent.sessionKey,
-                      message
-                    )
-                  }
-                  onStopRun={() =>
-                    handleStopRun(focusedAgent.agentId, focusedAgent.sessionKey)
-                  }
-                  onAvatarShuffle={() => handleAvatarShuffle(focusedAgent.agentId)}
-                />
-              ) : (
-                <EmptyStatePanel
-                  title={hasAnyAgents ? "No agents match this filter." : "No agents available."}
-                  description={
-                    hasAnyAgents
-                      ? undefined
-                      : "Use New Agent in the sidebar to add your first agent."
-                  }
-                  fillHeight
-                  className="items-center p-6 text-center text-sm"
-                />
-              )}
+              <AgentBrainPanel
+                client={client}
+                agents={agents}
+                selectedAgentId={selectedBrainAgentId}
+                onClose={() => {
+                  setBrainPanelOpen(false);
+                  setMobilePane("chat");
+                }}
+              />
             </div>
-            {brainPanelOpen ? (
-              <div
-                className={`${mobilePane === "brain" ? "block" : "hidden"} glass-panel min-h-0 w-full shrink-0 overflow-hidden p-0 xl:block xl:min-w-[360px] xl:max-w-[430px] transition-all duration-300 ease-in-out`}
+          ) : null}
+          <div
+            className={`${mobilePane === "chat" ? "flex" : "hidden"} glass-panel relative min-h-0 flex-1 overflow-hidden p-2 sm:p-3 xl:flex transition-all duration-300 ease-in-out`}
+            data-testid="focused-agent-panel"
+          >
+            {/* Expand sidebar button – only visible on desktop when collapsed */}
+            {sidebarCollapsed ? (
+              <button
+                type="button"
+                onClick={() => setSidebarCollapsed(false)}
+                className="absolute left-2 top-2 z-10 hidden xl:flex h-8 w-8 items-center justify-center rounded-md border border-border/70 bg-card/90 text-muted-foreground shadow-sm backdrop-blur transition hover:border-primary/50 hover:bg-primary/10 hover:text-foreground"
+                title="Show sidebar"
+                data-testid="expand-sidebar-button"
               >
-                <AgentBrainPanel
-                  client={client}
-                  agents={agents}
-                  selectedAgentId={selectedBrainAgentId}
-                  onClose={() => {
-                    setBrainPanelOpen(false);
-                    setMobilePane("chat");
-                  }}
-                />
-              </div>
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/></svg>
+              </button>
             ) : null}
-            {settingsAgent ? (
-              <div
-                className={`${mobilePane === "settings" ? "block" : "hidden"} glass-panel min-h-0 w-full shrink-0 overflow-hidden p-0 xl:block xl:min-w-[360px] xl:max-w-[430px] transition-all duration-300 ease-in-out`}
-              >
-                <AgentSettingsPanel
+            {focusedAgent ? (
+              <AgentChatPanel
+                agent={focusedAgent}
+                isSelected={false}
+                canSend={status === "connected"}
+                models={gatewayModels}
+                stopBusy={stopBusyAgentId === focusedAgent.agentId}
+                onOpenSettings={() => handleOpenAgentSettings(focusedAgent.agentId)}
+                onModelChange={(value) =>
+                  handleModelChange(focusedAgent.agentId, focusedAgent.sessionKey, value)
+                }
+                onThinkingChange={(value) =>
+                  handleThinkingChange(focusedAgent.agentId, focusedAgent.sessionKey, value)
+                }
+                onDraftChange={(value) =>
+                  handleDraftChange(focusedAgent.agentId, value)
+                }
+                onSend={(message) =>
+                  handleSend(
+                    focusedAgent.agentId,
+                    focusedAgent.sessionKey,
+                    message
+                  )
+                }
+                onStopRun={() =>
+                  handleStopRun(focusedAgent.agentId, focusedAgent.sessionKey)
+                }
+                onAvatarShuffle={() => handleAvatarShuffle(focusedAgent.agentId)}
+              />
+            ) : (
+              <EmptyStatePanel
+                title={hasAnyAgents ? "No agents match this filter." : "No agents available."}
+                description={
+                  hasAnyAgents
+                    ? undefined
+                    : "Use New Agent in the sidebar to add your first agent."
+                }
+                fillHeight
+                className="items-center p-6 text-center text-sm"
+              />
+            )}
+          </div>
+          {brainPanelOpen ? (
+            <div
+              className={`${mobilePane === "brain" ? "block" : "hidden"} glass-panel min-h-0 w-full shrink-0 overflow-hidden p-0 xl:block xl:min-w-[360px] xl:max-w-[430px] transition-all duration-300 ease-in-out`}
+            >
+              <AgentBrainPanel
+                client={client}
+                agents={agents}
+                selectedAgentId={selectedBrainAgentId}
+                onClose={() => {
+                  setBrainPanelOpen(false);
+                  setMobilePane("chat");
+                }}
+              />
+            </div>
+          ) : null}
+          {settingsAgent ? (
+            <div
+              className={`${mobilePane === "settings" ? "block" : "hidden"} glass-panel min-h-0 w-full shrink-0 overflow-hidden p-0 xl:block xl:min-w-[360px] xl:max-w-[430px] transition-all duration-300 ease-in-out`}
+            >
+              <AgentSettingsPanel
                   key={settingsAgent.agentId}
                   agent={settingsAgent}
                   onClose={() => {
@@ -2277,8 +1920,8 @@ const AgentStudioPage = () => {
               className="items-center px-6 py-10 text-center"
             />
           </div>
-	        )}
-	      </div>
+        )}
+      </div>
       {createAgentBlock && createAgentBlock.phase !== "queued" ? (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-background/70 backdrop-blur-sm"
