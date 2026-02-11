@@ -1,6 +1,6 @@
 import { ThemeToggle } from "@/components/theme-toggle";
 import type { GatewayStatus } from "@/lib/gateway/GatewayClient";
-import { Brain, Ellipsis, Cable, FolderOpen, Home, PanelLeftClose, PanelLeftOpen, PanelRightClose } from "lucide-react";
+import { Brain, Ellipsis, Cable, FolderOpen, Home, PanelLeftClose, PanelLeftOpen, PanelRightClose, Box } from "lucide-react";
 import Link from "next/link";
 
 type HeaderBarProps = {
@@ -122,6 +122,14 @@ export const HeaderBar = ({
               Files
             </Link>
           )}
+          <Link
+            href="/agent-office"
+            className="flex items-center gap-2 rounded-md border border-input/90 bg-background/75 px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-foreground transition hover:border-ring hover:bg-card"
+            data-testid="agent-office-link"
+          >
+            <Box className="h-4 w-4" />
+            Office
+          </Link>
           <button
             className={`flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] transition ${
               brainFilesOpen

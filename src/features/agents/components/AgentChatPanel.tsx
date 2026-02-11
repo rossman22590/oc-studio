@@ -18,6 +18,7 @@ import type { GatewayModelChoice } from "@/lib/gateway/models";
 import { isToolMarkdown, isTraceMarkdown } from "@/lib/text/message-extract";
 import { isNearBottom } from "@/lib/dom";
 import { AgentAvatar } from "./AgentAvatar";
+import { VoiceDictationButton } from "@/components/VoiceDictationButton";
 import {
   buildFinalAgentChatItems,
   normalizeAssistantDisplayText,
@@ -384,6 +385,7 @@ const AgentChatComposer = memo(function AgentChatComposer({
   attachedPDFs = [],
   onRemovePDF,
   fileInputRef,
+  onVoiceTranscript,
 }: {
   value: string;
   onChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
@@ -401,6 +403,7 @@ const AgentChatComposer = memo(function AgentChatComposer({
   attachedPDFs?: Array<{ name: string; content: string }>;
   onRemovePDF?: (index: number) => void;
   fileInputRef?: React.RefObject<HTMLInputElement>;
+  onVoiceTranscript?: (text: string) => void;
 }) {
   return (
     <div className="flex flex-col gap-2">
@@ -462,6 +465,12 @@ const AgentChatComposer = memo(function AgentChatComposer({
           className="hidden"
           data-testid="image-file-input"
         />
+        {onVoiceTranscript && (
+          <VoiceDictationButton
+            onTranscript={onVoiceTranscript}
+            disabled={!canSend}
+          />
+        )}
         <button
           type="button"
           onClick={() => fileInputRef?.current?.click()}
@@ -789,6 +798,23 @@ export const AgentChatPanel = ({
     handleSend(draftValue);
   }, [draftValue, handleSend]);
 
+  const handleVoiceTranscript = useCallback(
+    (transcript: string) => {
+      const newValue = draftValue ? `${draftValue} ${transcript}` : transcript;
+      plainDraftRef.current = newValue;
+      setDraftValue(newValue);
+      onDraftChange(newValue);
+      if (pendingResizeFrameRef.current !== null) {
+        cancelAnimationFrame(pendingResizeFrameRef.current);
+      }
+      pendingResizeFrameRef.current = requestAnimationFrame(() => {
+        pendingResizeFrameRef.current = null;
+        resizeDraft();
+      });
+    },
+    [draftValue, onDraftChange, resizeDraft]
+  );
+
   return (
     <div data-agent-panel className="group fade-up relative flex h-full w-full flex-col">
       <div className="px-3 pt-3 sm:px-4 sm:pt-4">
@@ -931,6 +957,7 @@ export const AgentChatPanel = ({
           attachedPDFs={attachedPDFs}
           onRemovePDF={handleRemovePDF}
           fileInputRef={fileInputRef}
+          onVoiceTranscript={handleVoiceTranscript}
         />
       </div>
     </div>

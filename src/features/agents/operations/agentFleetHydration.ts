@@ -163,6 +163,13 @@ export async function hydrateAgentFleetFromGateway(params: {
     })
   );
 
+  /* Restore persisted display prefs (toolCallingEnabled / showThinkingTraces) from localStorage */
+  let displayPrefs: Record<string, { toolCallingEnabled?: boolean; showThinkingTraces?: boolean }> = {};
+  try {
+    const raw = typeof window !== "undefined" ? localStorage.getItem("oc-display-prefs") : null;
+    if (raw) displayPrefs = JSON.parse(raw);
+  } catch { /* ignore */ }
+
   const seeds: AgentStoreSeed[] = agentsResult.agents.map((agent) => {
     const persistedSeed = settings && gatewayKey ? resolveAgentAvatarSeed(settings, gatewayKey, agent.id) : null;
     const avatarSeed = persistedSeed ?? agent.id;
@@ -176,6 +183,7 @@ export async function hydrateAgentFleetFromGateway(params: {
         ? `${modelProvider}/${modelId}`
         : resolveDefaultModelForAgent(agent.id, configSnapshot);
     const thinkingLevel = typeof mainSession?.thinkingLevel === "string" ? mainSession.thinkingLevel : null;
+    const agentPrefs = displayPrefs[agent.id];
     return {
       agentId: agent.id,
       name,
@@ -184,6 +192,8 @@ export async function hydrateAgentFleetFromGateway(params: {
       avatarUrl,
       model,
       thinkingLevel,
+      toolCallingEnabled: agentPrefs?.toolCallingEnabled,
+      showThinkingTraces: agentPrefs?.showThinkingTraces,
     };
   });
 

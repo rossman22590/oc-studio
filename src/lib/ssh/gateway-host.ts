@@ -91,9 +91,10 @@ export const runSshJson = (params: {
   input?: string;
   fallbackMessage?: string;
 }): unknown => {
-  const result = childProcess.spawnSync("ssh", ["-o", "BatchMode=yes", params.sshTarget, ...params.argv], {
+  const result = childProcess.spawnSync("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", params.sshTarget, ...params.argv], {
     encoding: "utf8",
     input: params.input,
+    timeout: 30_000, // 30s hard limit so we never block the API route forever
   });
   if (result.error) {
     throw new Error(`Failed to execute ssh: ${result.error.message}`);

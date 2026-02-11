@@ -27,6 +27,12 @@ const resolveAgentStateSshTarget = (): string => {
   return resolveGatewaySshTargetFromGatewayUrl(settings.gateway?.url ?? "", process.env);
 };
 
+const isDaytonaGateway = (): boolean => {
+  const settings = loadStudioSettings();
+  const gwUrl = settings.gateway?.url?.trim() ?? "";
+  return gwUrl.includes("daytona.works");
+};
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as unknown;
@@ -40,6 +46,13 @@ export async function POST(request: Request) {
     }
     if (!isSafeAgentId(trimmed)) {
       return NextResponse.json({ error: `Invalid agentId: ${trimmed}` }, { status: 400 });
+    }
+
+    // Daytona environments don't have SSH — skip the trash step and return a no-op result.
+    // The gateway config delete will still proceed; workspace cleanup is best-effort.
+    if (isDaytonaGateway()) {
+      console.log(`Daytona environment detected — skipping SSH trash for agent "${trimmed}"`);
+      return NextResponse.json({ result: { trashDir: "", moved: [] } });
     }
 
     const sshTarget = resolveAgentStateSshTarget();
@@ -70,6 +83,12 @@ export async function PUT(request: Request) {
     }
     if (!isSafeAgentId(trimmedAgent)) {
       return NextResponse.json({ error: `Invalid agentId: ${trimmedAgent}` }, { status: 400 });
+    }
+
+    // Daytona environments don't have SSH — return a no-op result.
+    if (isDaytonaGateway()) {
+      console.log(`Daytona environment detected — skipping SSH restore for agent "${trimmedAgent}"`);
+      return NextResponse.json({ result: { restored: [] } });
     }
 
     const sshTarget = resolveAgentStateSshTarget();

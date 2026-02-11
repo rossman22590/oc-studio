@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Play, Trash2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -596,6 +596,17 @@ const useAgentFilesEditor = (params: {
     },
     [agentFileTab]
   );
+
+  /* ── debounced auto-save: 1.5 s after typing stops ── */
+  const saveRef = useRef(saveAgentFiles);
+  saveRef.current = saveAgentFiles;
+  useEffect(() => {
+    if (!agentFilesDirty || agentFilesSaving) return;
+    const timer = window.setTimeout(() => {
+      void saveRef.current();
+    }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [agentFilesDirty, agentFilesSaving, agentFiles]);
 
   useEffect(() => {
     void loadAgentFiles();

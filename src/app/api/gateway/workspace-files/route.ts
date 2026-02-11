@@ -114,14 +114,35 @@ export async function GET(request: Request) {
         const errorText = await response.text();
         console.error("Daytona list-files error:", errorText);
         
-        // Check if it's a "no such file or directory" error
+        // If workspace directory doesn't exist yet, create it automatically
         if (errorText.includes("no such file or directory")) {
+          console.log(`Workspace directory not found for agent "${agentId}", creating it now...`);
+          
+          try {
+            // Create the workspace directory via Daytona Toolbox API
+            const createDirUrl = `${daytonaServerUrl}/toolbox/${sandboxId}/toolbox/files/folder?path=${encodeURIComponent(targetPath)}&mode=0755`;
+            const createDirResponse = await fetch(createDirUrl, {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${daytonaApiKey}`,
+                "x-daytona-target": daytonaTarget,
+              },
+            });
+            
+            if (createDirResponse.ok || createDirResponse.status === 409) {
+              console.log(`Created workspace directory for agent "${agentId}"`);
+            } else {
+              const createError = await createDirResponse.text();
+              console.error("Failed to create workspace directory:", createError);
+            }
+          } catch (createErr) {
+            console.error("Error creating workspace directory:", createErr);
+          }
+          
+          // Return empty entries — the directory now exists (or we at least tried)
           return NextResponse.json(
-            { 
-              error: `Workspace not found for agent "${agentId}". This agent may not have a workspace directory yet. Try creating some files for this agent first.`,
-              entries: []
-            },
-            { status: 200 } // Return 200 with empty entries instead of error
+            { path: path.trim(), entries: [] },
+            { status: 200 }
           );
         }
         
@@ -228,6 +249,13 @@ export async function GET(request: Request) {
 
         if (!response.ok) {
           const errorText = await response.text();
+          
+          // If workspace directory doesn't exist, return empty entries gracefully
+          if (errorText.includes("no such file or directory") || errorText.includes("not found")) {
+            console.log(`Legacy Daytona: workspace not found for agent "${agentId}", returning empty entries`);
+            return NextResponse.json({ path: path.trim(), entries: [] }, { status: 200 });
+          }
+          
           throw new Error(`Daytona API error: ${response.status} ${errorText}`);
         }
 

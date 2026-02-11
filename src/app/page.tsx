@@ -1211,6 +1211,22 @@ const AgentStudioPage = () => {
         try {
           await initializeAgentWorkspace({ client, agentId: newAgentId });
           await bootstrapAgentBrainFilesFromTemplate({ client, agentId: newAgentId });
+
+          // Proactively ensure the workspace directory exists on the sandbox
+          // so the File Manager won't see a "Workspace not found" error.
+          const DEFAULT_GW_URL =
+            process.env.NEXT_PUBLIC_GATEWAY_URL ?? "ws://127.0.0.1:18789";
+          const gwUrl =
+            typeof window !== "undefined"
+              ? localStorage.getItem("openclaw.gateway.url")?.trim() || DEFAULT_GW_URL
+              : DEFAULT_GW_URL;
+          try {
+            await fetch(
+              `/api/gateway/workspace-files?agentId=${encodeURIComponent(newAgentId)}&path=&gatewayUrl=${encodeURIComponent(gwUrl)}`
+            );
+          } catch {
+            // Non-critical — the route will create the dir on next File Manager load
+          }
         } catch (err) {
           const message =
             err instanceof Error
@@ -1413,6 +1429,14 @@ const AgentStudioPage = () => {
         agentId,
         patch: { toolCallingEnabled: enabled },
       });
+      try {
+        const key = "oc-display-prefs";
+        const raw = localStorage.getItem(key);
+        const prefs = raw ? JSON.parse(raw) : {};
+        if (!prefs[agentId]) prefs[agentId] = {};
+        prefs[agentId].toolCallingEnabled = enabled;
+        localStorage.setItem(key, JSON.stringify(prefs));
+      } catch { /* ignore */ }
     },
     [dispatch]
   );
@@ -1424,6 +1448,14 @@ const AgentStudioPage = () => {
         agentId,
         patch: { showThinkingTraces: enabled },
       });
+      try {
+        const key = "oc-display-prefs";
+        const raw = localStorage.getItem(key);
+        const prefs = raw ? JSON.parse(raw) : {};
+        if (!prefs[agentId]) prefs[agentId] = {};
+        prefs[agentId].showThinkingTraces = enabled;
+        localStorage.setItem(key, JSON.stringify(prefs));
+      } catch { /* ignore */ }
     },
     [dispatch]
   );

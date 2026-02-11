@@ -29,6 +29,7 @@ export const deleteAgentViaStudio = async (params: {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ agentId }),
+            signal: AbortSignal.timeout(45_000),
           }
         );
         return result;
@@ -40,6 +41,7 @@ export const deleteAgentViaStudio = async (params: {
             method: "PUT",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ agentId, trashDir }),
+            signal: AbortSignal.timeout(45_000),
           }
         );
         return result;
