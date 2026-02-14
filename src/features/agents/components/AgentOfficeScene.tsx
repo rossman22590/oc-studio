@@ -22,8 +22,9 @@ import { buildHistorySyncPatch } from "@/features/agents/state/runtimeEventBridg
 import { createStudioSettingsCoordinator } from "@/lib/studio/coordinator";
 import { SwarmDispatchModal } from "@/features/agents/components/SwarmDispatchModal";
 import { ChatroomModal } from "@/features/agents/components/ChatroomModal";
+import { KanbanBoardModal, loadKanbanCards, saveKanbanCards, useKanbanAutoComplete, type KanbanCard } from "@/features/agents/components/KanbanBoardModal";
 import Link from "next/link";
-import { Home, Cable, Volume2, Volume1, VolumeX, Zap, MessageSquare, SkipForward, Plus, Minus } from "lucide-react";
+import { Home, Cable, Volume2, Volume1, VolumeX, Zap, MessageSquare, SkipForward, Plus, Minus, LayoutGrid } from "lucide-react";
 
 export type AgentBoxData = {
   id: string;
@@ -44,6 +45,8 @@ export const AgentOfficeScene = () => {
   const [fileManagerOpen, setFileManagerOpen] = useState(false);
   const [swarmModalOpen, setSwarmModalOpen] = useState(false);
   const [chatroomOpen, setChatroomOpen] = useState(false);
+  const [kanbanOpen, setKanbanOpen] = useState(false);
+  const [kanbanCards, setKanbanCards] = useState<KanbanCard[]>(() => loadKanbanCards());
   const [agentBoxes, setAgentBoxes] = useState<AgentBoxData[]>([]);
   const [tvMuted, setTvMuted] = useState(true);
   const [tvVolume, setTvVolume] = useState(50);
@@ -171,6 +174,15 @@ export const AgentOfficeScene = () => {
       setError(err instanceof Error ? err.message : "Failed to send message");
     }
   };
+
+  // Kanban cards persistence
+  const handleKanbanCardsChange = useCallback((updated: KanbanCard[]) => {
+    setKanbanCards(updated);
+    saveKanbanCards(updated);
+  }, []);
+
+  // Kanban auto-completion — always active, even when modal is closed
+  useKanbanAutoComplete(kanbanCards, handleKanbanCardsChange);
 
   // Swarm dispatch — fire tasks to multiple agents in parallel
   const handleSwarmDispatch = async (
@@ -356,6 +368,17 @@ export const AgentOfficeScene = () => {
           <Zap className="h-4 w-4" />
           Swarm
         </button>
+        <button
+          onClick={() => setKanbanOpen(true)}
+          disabled={status !== "connected" || state.agents.length === 0}
+          className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 backdrop-blur-sm px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary hover:text-white shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Open kanban board"
+          aria-label="Open kanban board"
+          tabIndex={0}
+        >
+          <LayoutGrid className="h-4 w-4" />
+          Kanban
+        </button>
       </div>
 
       {/* Title overlay */}
@@ -491,6 +514,7 @@ export const AgentOfficeScene = () => {
             tvMuted={tvMuted}
             tvVolume={tvVolume}
             tvSkipSignal={tvSkipSignal}
+            kanbanCards={kanbanCards}
           />
 
           {/* Agent Boxes */}
@@ -592,6 +616,16 @@ export const AgentOfficeScene = () => {
         <ChatroomModal
           onClose={() => setChatroomOpen(false)}
           onSendMessage={handleSendMessage}
+        />
+      )}
+
+      {/* Kanban Board Modal */}
+      {kanbanOpen && (
+        <KanbanBoardModal
+          onClose={() => setKanbanOpen(false)}
+          onSendMessage={handleSendMessage}
+          cards={kanbanCards}
+          onCardsChange={handleKanbanCardsChange}
         />
       )}
 

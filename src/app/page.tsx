@@ -72,6 +72,7 @@ import { deleteAgentViaStudio } from "@/features/agents/operations/deleteAgentOp
 import { sendChatMessageViaStudio } from "@/features/agents/operations/chatSendOperation";
 import { SwarmDispatchModal } from "@/features/agents/components/SwarmDispatchModal";
 import { ChatroomModal } from "@/features/agents/components/ChatroomModal";
+import { KanbanBoardModal, loadKanbanCards, saveKanbanCards, useKanbanAutoComplete, type KanbanCard } from "@/features/agents/components/KanbanBoardModal";
 import { hydrateAgentFleetFromGateway } from "@/features/agents/operations/agentFleetHydration";
 import { useConfigMutationQueue } from "@/features/agents/operations/useConfigMutationQueue";
 import { useGatewayRestartBlock } from "@/features/agents/operations/useGatewayRestartBlock";
@@ -194,6 +195,8 @@ const AgentStudioPage = () => {
   const [showConnectionModal, setShowConnectionModal] = useState(false);
   const [showSwarmModal, setShowSwarmModal] = useState(false);
   const [showChatroomModal, setShowChatroomModal] = useState(false);
+  const [showKanbanModal, setShowKanbanModal] = useState(false);
+  const [kanbanCards, setKanbanCards] = useState<KanbanCard[]>(() => loadKanbanCards());
   const [focusFilter, setFocusFilter] = useState<FocusFilter>("all");
   const [focusedPreferencesLoaded, setFocusedPreferencesLoaded] = useState(false);
   const [agentsLoadedOnce, setAgentsLoadedOnce] = useState(false);
@@ -1356,6 +1359,14 @@ const AgentStudioPage = () => {
     [client, dispatch]
   );
 
+  const handleKanbanCardsChange = useCallback((updated: KanbanCard[]) => {
+    setKanbanCards(updated);
+    saveKanbanCards(updated);
+  }, []);
+
+  // Kanban auto-completion — always active, even when modal is closed
+  useKanbanAutoComplete(kanbanCards, handleKanbanCardsChange);
+
   const handleChatroomSend = useCallback(
     async (agentId: string, message: string) => {
       const trimmed = message.trim();
@@ -1744,6 +1755,9 @@ const AgentStudioPage = () => {
             showChatroomButton={true}
             chatroomDisabled={!hasAnyAgents || status !== "connected"}
             onChatroom={() => setShowChatroomModal(true)}
+            showKanbanButton={true}
+            kanbanDisabled={!hasAnyAgents || status !== "connected"}
+            onKanban={() => setShowKanbanModal(true)}
             sidebarCollapsed={sidebarCollapsed}
             onToggleSidebar={() => setSidebarCollapsed((prev) => !prev)}
             rightPanelOpen={brainPanelOpen || !!settingsAgent}
@@ -2059,6 +2073,15 @@ const AgentStudioPage = () => {
         <ChatroomModal
           onClose={() => setShowChatroomModal(false)}
           onSendMessage={handleChatroomSend}
+        />
+      )}
+
+      {showKanbanModal && (
+        <KanbanBoardModal
+          onClose={() => setShowKanbanModal(false)}
+          onSendMessage={handleChatroomSend}
+          cards={kanbanCards}
+          onCardsChange={handleKanbanCardsChange}
         />
       )}
     </div>

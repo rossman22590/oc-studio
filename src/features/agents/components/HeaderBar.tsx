@@ -3,7 +3,7 @@
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useEffect, useState } from "react";
 import type { GatewayStatus } from "@/lib/gateway/GatewayClient";
-import { Brain, Ellipsis, Cable, FolderOpen, Home, PanelLeftClose, PanelLeftOpen, PanelRightClose, Box, Zap, MessageSquare } from "lucide-react";
+import { Brain, Ellipsis, Cable, FolderOpen, Home, PanelLeftClose, PanelLeftOpen, PanelRightClose, Box, Zap, MessageSquare, LayoutGrid } from "lucide-react";
 import Link from "next/link";
 
 type HeaderBarProps = {
@@ -20,6 +20,9 @@ type HeaderBarProps = {
   showChatroomButton?: boolean;
   chatroomDisabled?: boolean;
   onChatroom?: () => void;
+  showKanbanButton?: boolean;
+  kanbanDisabled?: boolean;
+  onKanban?: () => void;
   sidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
   rightPanelOpen?: boolean;
@@ -77,6 +80,9 @@ export const HeaderBar = ({
   showChatroomButton = true,
   chatroomDisabled = false,
   onChatroom,
+  showKanbanButton = true,
+  kanbanDisabled = false,
+  onKanban,
   sidebarCollapsed = false,
   onToggleSidebar,
   rightPanelOpen = false,
@@ -226,6 +232,20 @@ export const HeaderBar = ({
             >
               <MessageSquare className="h-4 w-4" />
               Chat
+            </button>
+          ) : null}
+          {showKanbanButton && onKanban ? (
+            <button
+              className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+              type="button"
+              onClick={onKanban}
+              data-testid="kanban-button"
+              disabled={kanbanDisabled}
+              aria-label="Open kanban board"
+              tabIndex={0}
+            >
+              <LayoutGrid className="h-4 w-4" />
+              Kanban
             </button>
           ) : null}
           {showSwarmButton && onSwarm ? (

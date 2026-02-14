@@ -3,6 +3,7 @@ import { Box, Plane, Cylinder, Sphere, Html, Text } from "@react-three/drei";
 import { StatsBar } from "@/features/agents/components/dashboard";
 import { ActivityFeed, type ActivityEntry } from "@/features/agents/components/dashboard";
 import type { GatewayStatus } from "@/lib/gateway/GatewayClient";
+import { KanbanWallView, type KanbanCard } from "@/features/agents/components/KanbanBoardModal";
 
 /* ─── Nordic palette ───────────────────────────────────────── */
 const PALETTE = {
@@ -986,6 +987,8 @@ type OfficeEnvironmentProps = {
   tvSkipSignal?: number;
   /** Volume level 0-100 for the wall TV */
   tvVolume?: number;
+  /** Kanban cards to display on the wall-mounted board */
+  kanbanCards?: KanbanCard[];
 };
 
 export const OfficeEnvironment = ({
@@ -999,6 +1002,7 @@ export const OfficeEnvironment = ({
   tvMuted = true,
   tvSkipSignal = 0,
   tvVolume = 50,
+  kanbanCards = [],
 }: OfficeEnvironmentProps) => {
   const tvIframeRef = useRef<HTMLIFrameElement | null>(null);
 
@@ -1383,6 +1387,45 @@ export const OfficeEnvironment = ({
         <Box args={[0.6, 0.6, 0.15]} position={[0, 0, -0.12]}>
           <meshStandardMaterial color="#222222" roughness={0.5} metalness={0.4} />
         </Box>
+      </group>
+
+      {/* ── Wall-mounted Kanban Board — next to TV ─────────── */}
+      <group position={[-19.75, 4.2, -6]} rotation={[0, Math.PI / 2, 0]}>
+        {/* Board bezel — matte black */}
+        <Box args={[5.6, 3.3, 0.1]} castShadow>
+          <meshStandardMaterial color="#111111" roughness={0.35} />
+        </Box>
+        {/* Screen inset */}
+        <Box args={[5.2, 2.95, 0.02]} position={[0, 0, 0.06]}>
+          <meshStandardMaterial color="#0f1117" roughness={0.2} />
+        </Box>
+        {/* Kanban live view */}
+        <Html
+          transform
+          zIndexRange={[0, 0]}
+          position={[0, 0, 0.08]}
+          scale={0.26}
+          style={{ width: "600px", height: "340px", pointerEvents: "none" }}
+        >
+          <KanbanWallView cards={kanbanCards} />
+        </Html>
+        {/* Screen glow */}
+        <pointLight position={[0, 0, 0.5]} intensity={0.2} color="#6366f1" distance={4} decay={2} />
+        {/* Wall mount bracket */}
+        <Box args={[0.6, 0.6, 0.15]} position={[0, 0, -0.12]}>
+          <meshStandardMaterial color="#222222" roughness={0.5} metalness={0.4} />
+        </Box>
+        {/* Label above frame */}
+        <Text
+          position={[0, 2.0, 0.08]}
+          fontSize={0.25}
+          color="#64748b"
+          anchorX="center"
+          anchorY="middle"
+          fontWeight="bold"
+        >
+          KANBAN BOARD
+        </Text>
       </group>
 
       {/* ── Wall art / poster frames ──────────────────────── */}
