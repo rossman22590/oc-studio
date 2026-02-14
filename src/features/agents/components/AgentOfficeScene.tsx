@@ -21,8 +21,9 @@ import { createGatewayRuntimeEventHandler, type GatewayRuntimeEventHandler } fro
 import { buildHistorySyncPatch } from "@/features/agents/state/runtimeEventBridge";
 import { createStudioSettingsCoordinator } from "@/lib/studio/coordinator";
 import { SwarmDispatchModal } from "@/features/agents/components/SwarmDispatchModal";
+import { ChatroomModal } from "@/features/agents/components/ChatroomModal";
 import Link from "next/link";
-import { Home, Cable, Volume2, VolumeX, Zap } from "lucide-react";
+import { Home, Cable, Volume2, Volume1, VolumeX, Zap, MessageSquare, SkipForward, Plus, Minus } from "lucide-react";
 
 export type AgentBoxData = {
   id: string;
@@ -42,9 +43,11 @@ export const AgentOfficeScene = () => {
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   const [fileManagerOpen, setFileManagerOpen] = useState(false);
   const [swarmModalOpen, setSwarmModalOpen] = useState(false);
+  const [chatroomOpen, setChatroomOpen] = useState(false);
   const [agentBoxes, setAgentBoxes] = useState<AgentBoxData[]>([]);
-  const [musicPlaying, setMusicPlaying] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [tvMuted, setTvMuted] = useState(true);
+  const [tvVolume, setTvVolume] = useState(50);
+  const [tvSkipSignal, setTvSkipSignal] = useState(0);
   const historyInFlightRef = useRef<Set<string>>(new Set());
   
   const settingsCoordinator = createStudioSettingsCoordinator();
@@ -138,32 +141,8 @@ export const AgentOfficeScene = () => {
     }
   }, [state.agents, loadAgentHistory, status]);
 
-  // Initialize audio
-  useEffect(() => {
-    audioRef.current = new Audio("/office1.mp3");
-    audioRef.current.loop = true;
-    audioRef.current.volume = 0.3;
-
-    return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-    };
-  }, []);
-
-  // Toggle music
-  const toggleMusic = () => {
-    if (!audioRef.current) return;
-
-    if (musicPlaying) {
-      audioRef.current.pause();
-      setMusicPlaying(false);
-    } else {
-      audioRef.current.play().catch(err => console.error("Audio play failed:", err));
-      setMusicPlaying(true);
-    }
-  };
+  // Toggle mute/unmute for the wall TV YouTube player
+  const toggleMusic = () => setTvMuted((prev) => !prev);
 
   // Handle sending messages to agents — uses the real sessionKey from the agent store
   const handleSendMessage = async (agentId: string, message: string) => {
@@ -358,9 +337,20 @@ export const AgentOfficeScene = () => {
           Home
         </Link>
         <button
+          onClick={() => setChatroomOpen(true)}
+          disabled={status !== "connected" || state.agents.length === 0}
+          className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 backdrop-blur-sm px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary hover:text-white shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Open agent chatroom"
+          aria-label="Open chatroom"
+          tabIndex={0}
+        >
+          <MessageSquare className="h-4 w-4" />
+          Chat
+        </button>
+        <button
           onClick={() => setSwarmModalOpen(true)}
           disabled={status !== "connected" || state.agents.length === 0}
-          className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 backdrop-blur-sm px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary/10 shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
+          className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 backdrop-blur-sm px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary hover:text-white shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
           title="Dispatch tasks to all agents"
         >
           <Zap className="h-4 w-4" />
@@ -373,24 +363,72 @@ export const AgentOfficeScene = () => {
         <h1 className="console-title text-2xl text-foreground">Agent Office</h1>
       </div>
 
-      {/* Music toggle button */}
-      <div className="absolute top-20 right-4 z-10">
+      {/* TV controls */}
+      <div className="absolute top-20 right-4 z-10 flex items-center gap-2">
         <button
           onClick={toggleMusic}
           className="flex items-center gap-2 rounded-md border border-input/90 bg-background/75 backdrop-blur-sm px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-foreground transition hover:border-ring hover:bg-card shadow-lg"
-          title={musicPlaying ? "Mute office music" : "Play office music"}
+          title={tvMuted ? "Unmute office TV" : "Mute office TV"}
+          aria-label={tvMuted ? "Unmute office TV" : "Mute office TV"}
+          tabIndex={0}
         >
-          {musicPlaying ? (
+          {tvMuted ? (
             <>
-              <Volume2 className="h-4 w-4" />
-              Music On
+              <VolumeX className="h-4 w-4" />
+              Muted
             </>
           ) : (
             <>
-              <VolumeX className="h-4 w-4" />
-              Music Off
+              {tvVolume > 50 ? <Volume2 className="h-4 w-4" /> : <Volume1 className="h-4 w-4" />}
+              {tvVolume}%
             </>
           )}
+        </button>
+
+        {/* Volume down */}
+        <button
+          onClick={() => setTvVolume((v) => Math.max(0, v - 10))}
+          disabled={tvMuted}
+          className="flex items-center justify-center rounded-md border border-input/90 bg-background/75 backdrop-blur-sm h-8 w-8 text-foreground transition hover:border-ring hover:bg-card shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Volume down"
+          aria-label="Volume down"
+          tabIndex={0}
+        >
+          <Minus className="h-3.5 w-3.5" />
+        </button>
+
+        {/* Volume bar */}
+        <div
+          className="relative h-2 w-20 rounded-full bg-muted/60 border border-input/50 overflow-hidden"
+          title={`Volume: ${tvVolume}%`}
+        >
+          <div
+            className="absolute inset-y-0 left-0 rounded-full bg-primary/70 transition-all"
+            style={{ width: `${tvMuted ? 0 : tvVolume}%` }}
+          />
+        </div>
+
+        {/* Volume up */}
+        <button
+          onClick={() => setTvVolume((v) => Math.min(100, v + 10))}
+          disabled={tvMuted}
+          className="flex items-center justify-center rounded-md border border-input/90 bg-background/75 backdrop-blur-sm h-8 w-8 text-foreground transition hover:border-ring hover:bg-card shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Volume up"
+          aria-label="Volume up"
+          tabIndex={0}
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
+
+        <button
+          onClick={() => setTvSkipSignal((n) => n + 1)}
+          className="flex items-center gap-2 rounded-md border border-input/90 bg-background/75 backdrop-blur-sm px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-foreground transition hover:border-ring hover:bg-card shadow-lg"
+          title="Next track"
+          aria-label="Skip to next track"
+          tabIndex={0}
+        >
+          <SkipForward className="h-4 w-4" />
+          Next
         </button>
       </div>
 
@@ -450,6 +488,9 @@ export const AgentOfficeScene = () => {
               }))}
             deskAgents={deskAgents}
             onOpenFileManager={() => setFileManagerOpen(true)}
+            tvMuted={tvMuted}
+            tvVolume={tvVolume}
+            tvSkipSignal={tvSkipSignal}
           />
 
           {/* Agent Boxes */}
@@ -543,6 +584,14 @@ export const AgentOfficeScene = () => {
           onDispatch={handleSwarmDispatch}
           onClose={() => setSwarmModalOpen(false)}
           disabled={status !== "connected"}
+        />
+      )}
+
+      {/* Chatroom Modal */}
+      {chatroomOpen && (
+        <ChatroomModal
+          onClose={() => setChatroomOpen(false)}
+          onSendMessage={handleSendMessage}
         />
       )}
 

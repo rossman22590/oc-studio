@@ -1,3 +1,4 @@
+import { useRef, useEffect } from "react";
 import { Box, Plane, Cylinder, Sphere, Html, Text } from "@react-three/drei";
 import { StatsBar } from "@/features/agents/components/dashboard";
 import { ActivityFeed, type ActivityEntry } from "@/features/agents/components/dashboard";
@@ -267,6 +268,160 @@ const Workstation = ({
   );
 };
 
+/** Side workstation variant — slimmer profile + shelf light for left/right walls */
+const SideWorkstation = ({
+  position,
+  rotation = [0, 0, 0],
+  agent,
+}: {
+  position: [number, number, number];
+  rotation?: [number, number, number];
+  agent?: DeskAgentInfo;
+}) => {
+  const screenColor = agent?.monitorColor ?? "#cbd5e1";
+  const isOccupied = !!agent;
+  return (
+    <group position={position} rotation={rotation}>
+      {/* narrow standing desk top */}
+      <Box args={[2.4, 0.06, 1.0]} position={[0, 0.94, 0]} castShadow receiveShadow>
+        <meshStandardMaterial color="#bea06b" roughness={0.6} />
+      </Box>
+      {/* side legs */}
+      {[-1.05, 1.05].map((x, i) => (
+        <Cylinder key={i} args={[0.04, 0.03, 0.94, 7]} position={[x, 0.47, -0.32]} castShadow>
+          <meshStandardMaterial color={PALETTE.woodDark} roughness={0.55} />
+        </Cylinder>
+      ))}
+      {[-1.05, 1.05].map((x, i) => (
+        <Cylinder key={`f-${i}`} args={[0.04, 0.03, 0.94, 7]} position={[x, 0.47, 0.32]} castShadow>
+          <meshStandardMaterial color={PALETTE.woodDark} roughness={0.55} />
+        </Cylinder>
+      ))}
+
+      {/* ── Monitor — matching front-desk style ── */}
+      <Box args={[1.1, 0.65, 0.03]} position={[0, 1.5, -0.25]} castShadow>
+        <meshStandardMaterial color={PALETTE.monitor} roughness={0.4} />
+      </Box>
+      {/* screen face */}
+      <Box args={[1.0, 0.55, 0.005]} position={[0, 1.5, -0.232]}>
+        <meshStandardMaterial
+          color={isOccupied ? screenColor : "#111118"}
+          emissive={isOccupied ? screenColor : "#000000"}
+          emissiveIntensity={isOccupied ? 0.8 : 0}
+        />
+      </Box>
+
+      {/* Monitor HUD — same as front desks */}
+      {isOccupied && agent && (
+        <group position={[0, 1.5, -0.22]}>
+          <Plane args={[0.92, 0.48]} position={[0, 0, -0.001]}>
+            <meshBasicMaterial color="#000000" transparent opacity={0.92} />
+          </Plane>
+          <Text
+            position={[0, 0.12, 0]}
+            fontSize={0.12}
+            color="#ffffff"
+            anchorX="center"
+            anchorY="middle"
+            maxWidth={0.85}
+            overflowWrap="break-word"
+            textAlign="center"
+            fontWeight="bold"
+          >
+            {agent.name.toUpperCase()}
+          </Text>
+          <Text
+            position={[0, -0.04, 0]}
+            fontSize={0.08}
+            color={agent.status === "working" ? "#86efac" : "#fde047"}
+            anchorX="center"
+            anchorY="middle"
+            fontWeight="bold"
+          >
+            {agent.status === "working" ? "● RUNNING" : "● IDLE"}
+          </Text>
+          <Text
+            position={[0, -0.16, 0]}
+            fontSize={0.065}
+            color="#cccccc"
+            anchorX="center"
+            anchorY="middle"
+            fontWeight="bold"
+          >
+            {`${agent.outputLineCount} lines`}
+          </Text>
+        </group>
+      )}
+
+      {/* monitor stand */}
+      <Cylinder args={[0.03, 0.04, 0.35, 6]} position={[0, 1.13, -0.35]}>
+        <meshStandardMaterial color={PALETTE.metalLight} metalness={0.6} roughness={0.3} />
+      </Cylinder>
+      <Cylinder args={[0.15, 0.15, 0.015, 12]} position={[0, 0.955, -0.35]}>
+        <meshStandardMaterial color={PALETTE.metalLight} metalness={0.6} roughness={0.3} />
+      </Cylinder>
+
+      {/* keyboard hint */}
+      <Box args={[0.5, 0.015, 0.18]} position={[0, 0.955, 0.1]}>
+        <meshStandardMaterial color={PALETTE.fabricAlt} roughness={0.8} />
+      </Box>
+
+      {/* screen glow light when occupied */}
+      {isOccupied && (
+        <pointLight position={[0, 1.5, -0.05]} intensity={0.4} color={screenColor} distance={2.5} decay={2} />
+      )}
+
+      {/* shelf */}
+      <Box args={[1.4, 0.035, 0.2]} position={[0, 1.88, -0.34]}>
+        <meshStandardMaterial color="#d4c4a8" roughness={0.68} />
+      </Box>
+      {/* shelf decor */}
+      <Box args={[0.18, 0.24, 0.12]} position={[-0.48, 2.02, -0.34]}>
+        <meshStandardMaterial color="#7a8b9a" roughness={0.72} />
+      </Box>
+      <Box args={[0.16, 0.2, 0.1]} position={[-0.28, 2.0, -0.34]}>
+        <meshStandardMaterial color="#8b6b4a" roughness={0.72} />
+      </Box>
+      <Box args={[0.14, 0.16, 0.1]} position={[-0.10, 1.98, -0.34]}>
+        <meshStandardMaterial color="#6f8a72" roughness={0.72} />
+      </Box>
+      <Cylinder args={[0.045, 0.045, 0.09, 10]} position={[0.22, 1.95, -0.34]}>
+        <meshStandardMaterial color="#efe7da" roughness={0.9} />
+      </Cylinder>
+      <Sphere args={[0.05, 10, 10]} position={[0.45, 1.98, -0.34]}>
+        <meshStandardMaterial color="#9aa7b2" roughness={0.35} metalness={0.2} />
+      </Sphere>
+
+      {/* chair — matching front-desk style */}
+      <group position={[0, 0, 1.1]}>
+        <Box args={[0.52, 0.1, 0.48]} position={[0, 0.52, 0]} castShadow>
+          <meshStandardMaterial color={PALETTE.fabric} roughness={0.75} />
+        </Box>
+        <Box args={[0.5, 0.45, 0.05]} position={[0, 0.8, -0.22]} castShadow>
+          <meshStandardMaterial color={PALETTE.fabric} roughness={0.75} />
+        </Box>
+        <Cylinder args={[0.035, 0.035, 0.42, 6]} position={[0, 0.28, 0]}>
+          <meshStandardMaterial color={PALETTE.metal} metalness={0.7} roughness={0.3} />
+        </Cylinder>
+        {[0, 72, 144, 216, 288].map((deg, i) => (
+          <Box
+            key={i}
+            args={[0.035, 0.03, 0.28]}
+            position={[
+              Math.sin((deg * Math.PI) / 180) * 0.14,
+              0.035,
+              Math.cos((deg * Math.PI) / 180) * 0.14,
+            ]}
+            rotation={[0, (deg * Math.PI) / 180, 0]}
+          >
+            <meshStandardMaterial color={PALETTE.metal} metalness={0.7} roughness={0.3} />
+          </Box>
+        ))}
+      </group>
+    </group>
+  );
+};
+
 /** Cozy sofa with wood frame */
 const Sofa = ({
   position,
@@ -477,6 +632,43 @@ const CoffeeTable = ({ position }: { position: [number, number, number] }) => (
         <meshStandardMaterial color={PALETTE.woodMid} roughness={0.6} />
       </Cylinder>
     ))}
+  </group>
+);
+
+/** Tall arc lamp for lounge ambience */
+const LoungeFloorLamp = ({ position }: { position: [number, number, number] }) => (
+  <group position={position}>
+    <Cylinder args={[0.06, 0.08, 0.05, 10]} position={[0, 0.025, 0]}>
+      <meshStandardMaterial color={PALETTE.metal} roughness={0.45} metalness={0.55} />
+    </Cylinder>
+    <Cylinder args={[0.018, 0.02, 2.0, 8]} position={[0, 1.0, 0]}>
+      <meshStandardMaterial color={PALETTE.metalLight} roughness={0.35} metalness={0.6} />
+    </Cylinder>
+    <Cylinder args={[0.018, 0.018, 1.4, 8]} position={[0.58, 2.1, 0]} rotation={[0, 0, -Math.PI / 2.6]}>
+      <meshStandardMaterial color={PALETTE.metalLight} roughness={0.35} metalness={0.6} />
+    </Cylinder>
+    <Sphere args={[0.2, 12, 12]} position={[1.2, 2.43, 0]}>
+      <meshStandardMaterial color="#f4e3c3" emissive="#f4e3c3" emissiveIntensity={0.75} />
+    </Sphere>
+    <pointLight position={[1.2, 2.35, 0]} intensity={0.42} color="#f7dfbe" distance={7} />
+  </group>
+);
+
+/** Small decor set on table so lounge does not feel empty */
+const LoungeTableProps = ({ position }: { position: [number, number, number] }) => (
+  <group position={position}>
+    <Box args={[0.45, 0.04, 0.3]} position={[-0.18, 0.49, -0.04]} rotation={[0, 0.2, 0]}>
+      <meshStandardMaterial color="#5b7d8f" roughness={0.55} />
+    </Box>
+    <Cylinder args={[0.05, 0.05, 0.08, 12]} position={[0.2, 0.52, 0.05]}>
+      <meshStandardMaterial color="#efe6d7" roughness={0.9} />
+    </Cylinder>
+    <Cylinder args={[0.055, 0.055, 0.012, 12]} position={[0.2, 0.48, 0.05]}>
+      <meshStandardMaterial color="#d7c5ad" roughness={0.92} />
+    </Cylinder>
+    <Sphere args={[0.05, 8, 8]} position={[-0.34, 0.49, 0.13]}>
+      <meshStandardMaterial color="#7897a7" roughness={0.35} metalness={0.25} />
+    </Sphere>
   </group>
 );
 
@@ -788,6 +980,12 @@ type OfficeEnvironmentProps = {
   deskAgents?: Map<string, DeskAgentInfo>;
   /** Called when either file cabinet is clicked */
   onOpenFileManager?: () => void;
+  /** Whether the wall TV audio is muted */
+  tvMuted?: boolean;
+  /** Increment to skip to next track on the wall TV */
+  tvSkipSignal?: number;
+  /** Volume level 0-100 for the wall TV */
+  tvVolume?: number;
 };
 
 export const OfficeEnvironment = ({
@@ -798,7 +996,46 @@ export const OfficeEnvironment = ({
   activityEntries = [],
   deskAgents,
   onOpenFileManager,
+  tvMuted = true,
+  tvSkipSignal = 0,
+  tvVolume = 50,
 }: OfficeEnvironmentProps) => {
+  const tvIframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  // Mute/unmute the YouTube iframe via postMessage
+  useEffect(() => {
+    const iframe = tvIframeRef.current;
+    if (!iframe?.contentWindow) return;
+    const command = tvMuted ? "mute" : "unMute";
+    iframe.contentWindow.postMessage(
+      JSON.stringify({ event: "command", func: command, args: [] }),
+      "*"
+    );
+  }, [tvMuted]);
+
+  // Set volume on the YouTube iframe via postMessage
+  useEffect(() => {
+    const iframe = tvIframeRef.current;
+    if (!iframe?.contentWindow) return;
+    iframe.contentWindow.postMessage(
+      JSON.stringify({ event: "command", func: "setVolume", args: [tvVolume] }),
+      "*"
+    );
+  }, [tvVolume]);
+
+  // Skip to next track when tvSkipSignal changes
+  const prevSkipRef = useRef(tvSkipSignal);
+  useEffect(() => {
+    if (tvSkipSignal === prevSkipRef.current) return;
+    prevSkipRef.current = tvSkipSignal;
+    const iframe = tvIframeRef.current;
+    if (!iframe?.contentWindow) return;
+    iframe.contentWindow.postMessage(
+      JSON.stringify({ event: "command", func: "nextVideo", args: [] }),
+      "*"
+    );
+  }, [tvSkipSignal]);
+
   /** Look up agent for a desk at this position */
   const agentAt = (x: number, z: number): DeskAgentInfo | undefined =>
     deskAgents?.get(`${x},${z}`);
@@ -885,6 +1122,11 @@ export const OfficeEnvironment = ({
       <Workstation position={[-5, 0, -3]} rotation={[0, Math.PI, 0]} agent={agentAt(-5, -3)} />
       <Workstation position={[5, 0, -3]} rotation={[0, Math.PI, 0]} agent={agentAt(5, -3)} />
       <Workstation position={[10, 0, -3]} rotation={[0, Math.PI, 0]} agent={agentAt(10, -3)} />
+      {/* side wall station variants */}
+      <SideWorkstation position={[-16, 0, 7]} rotation={[0, Math.PI / 2, 0]} agent={agentAt(-16, 7)} />
+      <SideWorkstation position={[-16, 0, 12]} rotation={[0, Math.PI / 2, 0]} agent={agentAt(-16, 12)} />
+      <SideWorkstation position={[16, 0, 7]} rotation={[0, -Math.PI / 2, 0]} agent={agentAt(16, 7)} />
+      <SideWorkstation position={[16, 0, 12]} rotation={[0, -Math.PI / 2, 0]} agent={agentAt(16, 12)} />
 
       {/* ── File cabinets — placed behind desks, clickable ── */}
       <FileCabinet position={[-10, 0, -11]} onClick={onOpenFileManager} />
@@ -897,10 +1139,33 @@ export const OfficeEnvironment = ({
 
       {/* ── Lounge area ───────────────────────────────────── */}
       <group position={[0, 0, 10]}>
-        <Rug position={[0, 0.01, 0]} radius={3.5} color="#c8bba8" />
-        <CoffeeTable position={[0, 0, 0]} />
+        {/* layered rugs to add depth */}
+        <Rug position={[0, 0.01, 0]} radius={3.6} color="#c8bba8" />
+        <Rug position={[0.35, 0.02, 0.15]} radius={2.2} color="#d8c9b2" />
+        {/* seating cluster with slight asymmetry */}
+        <CoffeeTable position={[0.2, 0, -0.1]} />
+        <LoungeTableProps position={[0.2, 0, -0.1]} />
         <Sofa position={[-2.5, 0, -1.2]} rotation={[0, Math.PI / 2, 0]} fabricColor={PALETTE.fabric} />
         <Sofa position={[0, 0, 2.2]} rotation={[0, Math.PI, 0]} fabricColor="#9a8b7e" />
+        {/* side stool / ottoman */}
+        <Cylinder args={[0.45, 0.45, 0.32, 18]} position={[2.35, 0.18, 0.95]} castShadow>
+          <meshStandardMaterial color="#b59f83" roughness={0.78} />
+        </Cylinder>
+        {/* warm floor lamp + extra plant for visual balance */}
+        <LoungeFloorLamp position={[3.3, 0, 2.5]} />
+        <GuardedPlant position={[3.9, 0, 3.0]} size="medium" />
+        {/* left/right fill so lounge doesn't feel empty */}
+        <Bookshelf position={[-4.9, 0, 2.5]} rotation={[0, Math.PI / 2.1, 0]} />
+        <Bookshelf position={[4.9, 0, 2.5]} rotation={[0, -Math.PI / 2.1, 0]} />
+        <Box args={[0.9, 0.06, 0.55]} position={[-4.0, 0.48, 1.4]} castShadow>
+          <meshStandardMaterial color={PALETTE.woodLight} roughness={0.62} />
+        </Box>
+        <Box args={[0.9, 0.06, 0.55]} position={[4.0, 0.48, 1.35]} castShadow>
+          <meshStandardMaterial color={PALETTE.woodLight} roughness={0.62} />
+        </Box>
+        <GuardedPlant position={[-3.9, 0.54, 1.4]} size="small" />
+        <GuardedPlant position={[4.0, 0.54, 1.35]} size="small" />
+        <LoungeFloorLamp position={[-3.7, 0, 2.35]} />
       </group>
 
       {/* ── Whiteboard (large analytics board) ───────────── */}
@@ -932,7 +1197,6 @@ export const OfficeEnvironment = ({
         {/* Analytics content — clean whiteboard style */}
         <Html
           transform
-          occlude
           zIndexRange={[0, 0]}
           position={[0, 0, 0.04]}
           scale={0.27}
@@ -1082,6 +1346,43 @@ export const OfficeEnvironment = ({
             </div>
           </div>
         </Html>
+      </group>
+
+      {/* ── Wall-mounted TV — YouTube playlist ────────────── */}
+      <group position={[-19.75, 4.2, 0]} rotation={[0, Math.PI / 2, 0]}>
+        {/* TV bezel — matte black */}
+        <Box args={[5.6, 3.3, 0.1]} castShadow>
+          <meshStandardMaterial color="#111111" roughness={0.35} />
+        </Box>
+        {/* Screen inset */}
+        <Box args={[5.2, 2.95, 0.02]} position={[0, 0, 0.06]}>
+          <meshStandardMaterial color="#0a0a0a" roughness={0.2} />
+        </Box>
+        {/* Embedded YouTube iframe — scaled to fill the bezel */}
+        <Html
+          transform
+          zIndexRange={[0, 0]}
+          position={[0, 0, 0.08]}
+          scale={0.26}
+          style={{ width: "720px", height: "405px", pointerEvents: "auto" }}
+        >
+          <iframe
+            ref={tvIframeRef}
+            width="720"
+            height="405"
+            src="https://www.youtube.com/embed/videoseries?list=PLDIoUOhQQPlWc-Kd6TCjTRIl0Z6fSQV0X&autoplay=1&mute=1&loop=1&enablejsapi=1"
+            title="Office Music"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+            style={{ border: "none", borderRadius: 0, background: "#000", display: "block" }}
+          />
+        </Html>
+        {/* Screen glow */}
+        <pointLight position={[0, 0, 0.5]} intensity={0.3} color="#a8c4e8" distance={5} decay={2} />
+        {/* Wall mount bracket */}
+        <Box args={[0.6, 0.6, 0.15]} position={[0, 0, -0.12]}>
+          <meshStandardMaterial color="#222222" roughness={0.5} metalness={0.4} />
+        </Box>
       </group>
 
       {/* ── Wall art / poster frames ──────────────────────── */}

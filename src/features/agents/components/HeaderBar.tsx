@@ -3,7 +3,7 @@
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useEffect, useState } from "react";
 import type { GatewayStatus } from "@/lib/gateway/GatewayClient";
-import { Brain, Ellipsis, Cable, FolderOpen, Home, PanelLeftClose, PanelLeftOpen, PanelRightClose, Box, Zap } from "lucide-react";
+import { Brain, Ellipsis, Cable, FolderOpen, Home, PanelLeftClose, PanelLeftOpen, PanelRightClose, Box, Zap, MessageSquare } from "lucide-react";
 import Link from "next/link";
 
 type HeaderBarProps = {
@@ -17,6 +17,9 @@ type HeaderBarProps = {
   showSwarmButton?: boolean;
   swarmDisabled?: boolean;
   onSwarm?: () => void;
+  showChatroomButton?: boolean;
+  chatroomDisabled?: boolean;
+  onChatroom?: () => void;
   sidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
   rightPanelOpen?: boolean;
@@ -71,6 +74,9 @@ export const HeaderBar = ({
   showSwarmButton = true,
   swarmDisabled = false,
   onSwarm,
+  showChatroomButton = true,
+  chatroomDisabled = false,
+  onChatroom,
   sidebarCollapsed = false,
   onToggleSidebar,
   rightPanelOpen = false,
@@ -208,9 +214,23 @@ export const HeaderBar = ({
             <Box className="h-4 w-4" />
             Office
           </Link>
+          {showChatroomButton && onChatroom ? (
+            <button
+              className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+              type="button"
+              onClick={onChatroom}
+              data-testid="chatroom-button"
+              disabled={chatroomDisabled}
+              aria-label="Open chatroom"
+              tabIndex={0}
+            >
+              <MessageSquare className="h-4 w-4" />
+              Chat
+            </button>
+          ) : null}
           {showSwarmButton && onSwarm ? (
             <button
-              className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary/10 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
               type="button"
               onClick={onSwarm}
               data-testid="swarm-dispatch-button"

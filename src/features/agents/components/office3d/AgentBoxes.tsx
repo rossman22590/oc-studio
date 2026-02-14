@@ -47,6 +47,11 @@ const DESK_SNAPS: SnapPoint[] = [
   { id: "desk-bl1", kind: "desk", position: [-5, 0, -3.1], seatY: 1.25, faceAngle: 0 },
   { id: "desk-br1", kind: "desk", position: [5, 0, -3.1], seatY: 1.25, faceAngle: 0 },
   { id: "desk-br2", kind: "desk", position: [10, 0, -3.1], seatY: 1.25, faceAngle: 0 },
+  // Back-corner side workstations
+  { id: "desk-lw1", kind: "desk", position: [-16, 0, 7], seatY: 1.25, faceAngle: Math.PI / 2 },
+  { id: "desk-lw2", kind: "desk", position: [-16, 0, 12], seatY: 1.25, faceAngle: Math.PI / 2 },
+  { id: "desk-rw1", kind: "desk", position: [16, 0, 7], seatY: 1.25, faceAngle: -Math.PI / 2 },
+  { id: "desk-rw2", kind: "desk", position: [16, 0, 12], seatY: 1.25, faceAngle: -Math.PI / 2 },
 ];
 
 const COUCH_SNAPS: SnapPoint[] = [
@@ -57,6 +62,27 @@ const COUCH_SNAPS: SnapPoint[] = [
 ];
 
 export const ALL_SNAP_POINTS: SnapPoint[] = [...DESK_SNAPS, ...COUCH_SNAPS];
+
+const VALID_SNAP_IDS = new Set(ALL_SNAP_POINTS.map((sp) => sp.id));
+
+/**
+ * Keep persisted assignments resilient across layout changes:
+ * - drop unknown snap ids
+ * - keep only one snap per agent (latest wins)
+ */
+const normalizeAssignments = (input: Map<string, string>): Map<string, string> => {
+  const latestSnapByAgent = new Map<string, string>();
+  for (const [snapId, agentId] of input) {
+    if (!VALID_SNAP_IDS.has(snapId)) continue;
+    if (!agentId) continue;
+    latestSnapByAgent.set(agentId, snapId);
+  }
+  const normalized = new Map<string, string>();
+  for (const [agentId, snapId] of latestSnapByAgent) {
+    normalized.set(snapId, agentId);
+  }
+  return normalized;
+};
 
 /* ─── WASD keyboard camera movement ─────────────────────── */
 
@@ -195,18 +221,27 @@ export const AgentBoxes = ({
   onViewDetails,
 }: AgentBoxesProps) => {
   /* ── assignment state: snapId → agentId — initialized from localStorage ── */
-  const [assignments, setAssignments] = useState<Map<string, string>>(() => loadAssignments());
+  const [assignments, setAssignments] = useState<Map<string, string>>(() =>
+    normalizeAssignments(loadAssignments())
+  );
   /* ── "picked up" agent — glows, waiting for hotspot click ── */
   const [pickedAgentId, setPickedAgentId] = useState<string | null>(null);
 
-  // Auto-assign unplaced agents, but keep existing saved positions
+  // Auto-assign unplaced agents, but keep existing saved positions.
+  // IMPORTANT: skip when agents list is empty (hasn't loaded yet) to avoid
+  // wiping saved positions — that was causing back-desk lobsters to vanish.
   useEffect(() => {
+    if (agents.length === 0) return;
+
     setAssignments((prev) => {
-      const next = new Map(prev);
-      // Remove stale assignments for agents that no longer exist
+      const next = normalizeAssignments(new Map(prev));
+
+      // Only remove truly stale agents (gone from the list).
+      const currentIds = new Set(agents.map((a) => a.id));
       for (const [snapId, agentId] of next) {
-        if (!agents.find((a) => a.id === agentId)) next.delete(snapId);
+        if (!currentIds.has(agentId)) next.delete(snapId);
       }
+
       const placed = new Set(next.values());
       const free = ALL_SNAP_POINTS.filter((sp) => !next.has(sp.id));
       for (const agent of agents) {
@@ -217,13 +252,13 @@ export const AgentBoxes = ({
           placed.add(agent.id);
         }
       }
-      return next;
+      return normalizeAssignments(next);
     });
   }, [agents]);
 
   // Persist assignments to localStorage on every change
   useEffect(() => {
-    saveAssignments(assignments);
+    saveAssignments(normalizeAssignments(assignments));
   }, [assignments]);
 
   const assignAgent = useCallback((agentId: string, snapId: string) => {
@@ -430,6 +465,7 @@ const LobsterAgent = ({
   onSelect: () => void;
 }) => {
   const groupRef = useRef<THREE.Group>(null);
+  const uiGroupRef = useRef<THREE.Group>(null);
   const { scene } = useGLTF("/lobster.glb");
   const model = useMemo(() => scene.clone(), [scene]);
 
@@ -476,10 +512,17 @@ const LobsterAgent = ({
     } else {
       groupRef.current.scale.lerp(new THREE.Vector3(1, 1, 1), delta * 5);
     }
+
+    // Keep the UI overlay group tracking the lobster's actual world position
+    if (uiGroupRef.current) {
+      uiGroupRef.current.position.set(pos.x, 0, pos.z);
+    }
   });
 
-  const labelY = targetPos[1] + 1.3;
-  const dotY = targetPos[1] + 0.85;
+  // UI heights relative to the lobster's base seatY
+  const seatY = snap?.seatY ?? 0.5;
+  const labelY = seatY + 1.3;
+  const dotY = seatY + 0.85;
 
   return (
     <group>
@@ -523,78 +566,81 @@ const LobsterAgent = ({
         )}
       </group>
 
-      {/* Name label */}
-      <Text
-        position={[targetPos[0], labelY, targetPos[2]]}
-        fontSize={0.3}
-        color={isPicked ? "#00ffcc" : "white"}
-        anchorX="center"
-        anchorY="middle"
-        outlineWidth={0.02}
-        outlineColor="black"
-        fontWeight={isPicked ? "bold" : "normal"}
-      >
-        {isPicked ? `✦ ${agent.name} ✦` : agent.name}
-      </Text>
+      {/* ── Floating UI – tracks the lobster's ACTUAL animated position ── */}
+      <group ref={uiGroupRef} position={[targetPos[0], 0, targetPos[2]]}>
+        {/* Name label */}
+        <Text
+          position={[0, labelY, 0]}
+          fontSize={0.3}
+          color={isPicked ? "#00ffcc" : "white"}
+          anchorX="center"
+          anchorY="middle"
+          outlineWidth={0.02}
+          outlineColor="black"
+          fontWeight={isPicked ? "bold" : "normal"}
+        >
+          {isPicked ? `✦ ${agent.name} ✦` : agent.name}
+        </Text>
 
-      {/* Status dot */}
-      <mesh
-        position={[targetPos[0], dotY, targetPos[2]]}
-        onClick={(e) => {
-          e.stopPropagation();
-          setMenuOpen(!menuOpen);
-        }}
-        onPointerOver={(e) => {
-          e.stopPropagation();
-          document.body.style.cursor = "pointer";
-        }}
-        onPointerOut={(e) => {
-          e.stopPropagation();
-          document.body.style.cursor = "default";
-        }}
-      >
-        <sphereGeometry args={[0.15, 16, 16]} />
-        <meshStandardMaterial
-          color={agent.status === "working" ? "#00ff00" : "#ffaa00"}
-          emissive={agent.status === "working" ? "#00ff00" : "#ffaa00"}
-          emissiveIntensity={menuOpen ? 2 : 1}
-        />
-      </mesh>
+        {/* Status dot */}
+        <mesh
+          position={[0, dotY, 0]}
+          onClick={(e) => {
+            e.stopPropagation();
+            setMenuOpen(!menuOpen);
+          }}
+          onPointerOver={(e) => {
+            e.stopPropagation();
+            document.body.style.cursor = "pointer";
+          }}
+          onPointerOut={(e) => {
+            e.stopPropagation();
+            document.body.style.cursor = "default";
+          }}
+        >
+          <sphereGeometry args={[0.15, 16, 16]} />
+          <meshStandardMaterial
+            color={agent.status === "working" ? "#00ff00" : "#ffaa00"}
+            emissive={agent.status === "working" ? "#00ff00" : "#ffaa00"}
+            emissiveIntensity={menuOpen ? 2 : 1}
+          />
+        </mesh>
 
-      {/* Context Menu */}
-      {menuOpen && (
-        <Html position={[targetPos[0], labelY, targetPos[2]]} center>
-          <div
-            className="glass-panel px-2 py-1 min-w-32 animate-scale-in"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              onClick={() => {
-                setMenuOpen(false);
-                if (onOpenChat) onOpenChat(agent.id);
-              }}
-              className="w-full text-left px-3 py-2 text-xs font-semibold uppercase tracking-wider text-foreground hover:bg-primary/20 rounded transition"
+        {/* Context Menu */}
+        {menuOpen && (
+          <Html position={[0, labelY, 0]} center zIndexRange={[10, 10]}>
+            <div
+              className="glass-panel px-2 py-1 min-w-32 animate-scale-in"
+              onClick={(e) => e.stopPropagation()}
             >
-              💬 Send Chat
-            </button>
-            <button
-              onClick={() => {
-                setMenuOpen(false);
-                if (onViewDetails) onViewDetails(agent.id);
-              }}
-              className="w-full text-left px-3 py-2 text-xs font-semibold uppercase tracking-wider text-foreground hover:bg-primary/20 rounded transition"
-            >
-              👁️ View Details
-            </button>
-            <button
-              onClick={() => setMenuOpen(false)}
-              className="w-full text-left px-3 py-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:bg-muted rounded transition"
-            >
-              ✕ Close
-            </button>
-          </div>
-        </Html>
-      )}
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
+                  if (onOpenChat) onOpenChat(agent.id);
+                }}
+                className="w-full text-left px-3 py-2 text-xs font-semibold uppercase tracking-wider text-foreground hover:bg-primary/20 rounded transition"
+              >
+                💬 Send Chat
+              </button>
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
+                  if (onViewDetails) onViewDetails(agent.id);
+                }}
+                className="w-full text-left px-3 py-2 text-xs font-semibold uppercase tracking-wider text-foreground hover:bg-primary/20 rounded transition"
+              >
+                👁️ View Details
+              </button>
+              <button
+                onClick={() => setMenuOpen(false)}
+                className="w-full text-left px-3 py-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:bg-muted rounded transition"
+              >
+                ✕ Close
+              </button>
+            </div>
+          </Html>
+        )}
+      </group>
     </group>
   );
 };

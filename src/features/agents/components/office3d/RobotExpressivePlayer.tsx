@@ -20,7 +20,7 @@ const RUN_SPEED = 5.1;
 const JUMP_VELOCITY = 6;
 const GRAVITY = 16;
 const TURN_LERP = 10;
-const AUTO_RESUME_DELAY = 2.25;
+const AUTO_RESUME_DELAY = 40;
 const AUTO_WAYPOINT_REACH = 0.85;
 const AUTO_PATROL_CLEARANCE = PLAYER_RADIUS * 1.8;
 
@@ -438,16 +438,51 @@ export const RobotExpressivePlayer = ({ position = [0, 0, 2] }: RobotExpressiveP
     rootRef.current.position.x = depenetrated.x;
     rootRef.current.position.z = depenetrated.z;
 
-    const dx = rootRef.current.position.x - previousX;
-    const dz = rootRef.current.position.z - previousZ;
-    if (Math.abs(dx) > 0.000001 || Math.abs(dz) > 0.000001) {
-      camera.position.x += dx;
-      camera.position.z += dz;
+    // ── Camera follow ──
+    const charX = rootRef.current.position.x;
+    const charZ = rootRef.current.position.z;
+    const charY = rootRef.current.position.y;
+    const focusY = charY + 1.0;
+    const dx = charX - previousX;
+    const dz = charZ - previousZ;
+
+    if (shouldAutopatrol) {
+      // During auto-patrol: camera smoothly orbits behind the character at a
+      // fixed offset so it always stays centered in a 3rd-person view.
+      const FOLLOW_DIST = 8;
+      const FOLLOW_HEIGHT = 5;
+      const followLerp = Math.min(1, delta * 3);
+
+      // Position camera behind the character's facing direction
+      const facingAngle = rootRef.current.rotation.y;
+      const idealCamX = charX - Math.sin(facingAngle) * FOLLOW_DIST;
+      const idealCamZ = charZ - Math.cos(facingAngle) * FOLLOW_DIST;
+      const idealCamY = charY + FOLLOW_HEIGHT;
+
+      camera.position.x = THREE.MathUtils.lerp(camera.position.x, idealCamX, followLerp);
+      camera.position.y = THREE.MathUtils.lerp(camera.position.y, idealCamY, followLerp);
+      camera.position.z = THREE.MathUtils.lerp(camera.position.z, idealCamZ, followLerp);
+
       if (controls?.target) {
-        controls.target.x += dx;
-        controls.target.z += dz;
+        controls.target.x = THREE.MathUtils.lerp(controls.target.x, charX, followLerp);
+        controls.target.y = THREE.MathUtils.lerp(controls.target.y, focusY, followLerp);
+        controls.target.z = THREE.MathUtils.lerp(controls.target.z, charZ, followLerp);
+        controls.update?.();
       }
-      controls?.update?.();
+    } else {
+      // Manual mode: shift camera by movement delta, smoothly track orbit target
+      if (Math.abs(dx) > 0.000001 || Math.abs(dz) > 0.000001) {
+        camera.position.x += dx;
+        camera.position.z += dz;
+      }
+
+      if (controls?.target) {
+        const follow = Math.min(1, delta * 10);
+        controls.target.x = THREE.MathUtils.lerp(controls.target.x, charX, follow);
+        controls.target.y = THREE.MathUtils.lerp(controls.target.y, focusY, follow);
+        controls.target.z = THREE.MathUtils.lerp(controls.target.z, charZ, follow);
+        controls.update?.();
+      }
     }
   });
 

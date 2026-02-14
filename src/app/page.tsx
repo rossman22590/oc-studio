@@ -71,6 +71,7 @@ import { bootstrapAgentBrainFilesFromTemplate, initializeAgentWorkspace } from "
 import { deleteAgentViaStudio } from "@/features/agents/operations/deleteAgentOperation";
 import { sendChatMessageViaStudio } from "@/features/agents/operations/chatSendOperation";
 import { SwarmDispatchModal } from "@/features/agents/components/SwarmDispatchModal";
+import { ChatroomModal } from "@/features/agents/components/ChatroomModal";
 import { hydrateAgentFleetFromGateway } from "@/features/agents/operations/agentFleetHydration";
 import { useConfigMutationQueue } from "@/features/agents/operations/useConfigMutationQueue";
 import { useGatewayRestartBlock } from "@/features/agents/operations/useGatewayRestartBlock";
@@ -192,6 +193,7 @@ const AgentStudioPage = () => {
   const { state, dispatch, hydrateAgents, setError, setLoading } = useAgentStore();
   const [showConnectionModal, setShowConnectionModal] = useState(false);
   const [showSwarmModal, setShowSwarmModal] = useState(false);
+  const [showChatroomModal, setShowChatroomModal] = useState(false);
   const [focusFilter, setFocusFilter] = useState<FocusFilter>("all");
   const [focusedPreferencesLoaded, setFocusedPreferencesLoaded] = useState(false);
   const [agentsLoadedOnce, setAgentsLoadedOnce] = useState(false);
@@ -1354,6 +1356,26 @@ const AgentStudioPage = () => {
     [client, dispatch]
   );
 
+  const handleChatroomSend = useCallback(
+    async (agentId: string, message: string) => {
+      const trimmed = message.trim();
+      if (!trimmed) return;
+      const agent = stateRef.current.agents.find((a) => a.agentId === agentId);
+      if (!agent) return;
+      await sendChatMessageViaStudio({
+        client,
+        dispatch,
+        getAgent: (id) =>
+          stateRef.current.agents.find((entry) => entry.agentId === id) ?? null,
+        agentId,
+        sessionKey: agent.sessionKey,
+        message: trimmed,
+        clearRunTracking: (runId) => runtimeEventHandlerRef.current?.clearRunTracking(runId),
+      });
+    },
+    [client, dispatch]
+  );
+
   const handleSwarmDispatch = useCallback(
     async (tasks: { agentId: string; sessionKey: string; message: string }[]) => {
       if (status !== "connected") {
@@ -1719,6 +1741,9 @@ const AgentStudioPage = () => {
             showSwarmButton={true}
             swarmDisabled={!hasAnyAgents || status !== "connected"}
             onSwarm={() => setShowSwarmModal(true)}
+            showChatroomButton={true}
+            chatroomDisabled={!hasAnyAgents || status !== "connected"}
+            onChatroom={() => setShowChatroomModal(true)}
             sidebarCollapsed={sidebarCollapsed}
             onToggleSidebar={() => setSidebarCollapsed((prev) => !prev)}
             rightPanelOpen={brainPanelOpen || !!settingsAgent}
@@ -2027,6 +2052,13 @@ const AgentStudioPage = () => {
           onDispatch={handleSwarmDispatch}
           onClose={() => setShowSwarmModal(false)}
           disabled={status !== "connected"}
+        />
+      )}
+
+      {showChatroomModal && (
+        <ChatroomModal
+          onClose={() => setShowChatroomModal(false)}
+          onSendMessage={handleChatroomSend}
         />
       )}
     </div>
