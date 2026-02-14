@@ -89,6 +89,7 @@ export const FileManagerModal = ({ onClose }: FileManagerModalProps) => {
   const [agentsFromGateway, setAgentsFromGateway] = useState<
     { id: string; name: string }[]
   >([]);
+  const [defaultAgentId, setDefaultAgentId] = useState<string>("");
 
   useEffect(() => {
     if (status !== "connected" || !client) return;
@@ -96,6 +97,7 @@ export const FileManagerModal = ({ onClose }: FileManagerModalProps) => {
     const load = async () => {
       try {
         const result = await client.call<{
+          defaultId?: string;
           agents: Array<{
             id: string;
             name?: string;
@@ -103,12 +105,13 @@ export const FileManagerModal = ({ onClose }: FileManagerModalProps) => {
           }>;
         }>("agents.list", {});
         if (cancelled) return;
-        setAgentsFromGateway(
-          result.agents.map((a) => ({
-            id: a.id,
-            name: a.name || a.identity?.name || a.id,
-          })),
-        );
+        const mappedAgents = result.agents.map((a) => ({
+          id: a.id,
+          name: a.name || a.identity?.name || a.id,
+        }));
+        setAgentsFromGateway(mappedAgents);
+        const resolvedDefaultId = (result.defaultId || "").trim() || mappedAgents[0]?.id || "";
+        setDefaultAgentId(resolvedDefaultId);
       } catch {
         /* fall back to store agents */
       }
@@ -118,6 +121,11 @@ export const FileManagerModal = ({ onClose }: FileManagerModalProps) => {
       cancelled = true;
     };
   }, [client, status]);
+
+  const shouldUseRootWorkspace = useCallback(
+    (agentId: string) => agentId === "main" || (defaultAgentId !== "" && agentId === defaultAgentId),
+    [defaultAgentId],
+  );
 
   // Prefer gateway list, fall back to store
   const agentList = agentsFromGateway.length > 0 ? agentsFromGateway : agents;
@@ -137,6 +145,7 @@ export const FileManagerModal = ({ onClose }: FileManagerModalProps) => {
           agentId,
           path: path || "",
           gatewayUrl,
+          rootWorkspace: shouldUseRootWorkspace(agentId) ? "1" : "0",
         });
         const response = await fetch(
           `/api/gateway/workspace-files?${params.toString()}`,
@@ -157,7 +166,7 @@ export const FileManagerModal = ({ onClose }: FileManagerModalProps) => {
         setLoading(false);
       }
     },
-    [gatewayUrl],
+    [gatewayUrl, shouldUseRootWorkspace],
   );
 
   useEffect(() => {
@@ -202,6 +211,7 @@ export const FileManagerModal = ({ onClose }: FileManagerModalProps) => {
         agentId: selectedAgent,
         path: file.path || file.name,
         gatewayUrl,
+        rootWorkspace: shouldUseRootWorkspace(selectedAgent) ? "1" : "0",
       });
       const response = await fetch(
         `/api/gateway/workspace-files/read?${params.toString()}`,
@@ -226,6 +236,7 @@ export const FileManagerModal = ({ onClose }: FileManagerModalProps) => {
           agentId: selectedAgent,
           path: file.path || file.name,
           gatewayUrl,
+          rootWorkspace: shouldUseRootWorkspace(selectedAgent) ? "1" : "0",
         });
         const response = await fetch(
           `/api/gateway/workspace-files/read?${params.toString()}`,

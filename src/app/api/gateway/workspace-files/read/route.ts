@@ -8,6 +8,10 @@ export async function GET(request: NextRequest) {
     const agentId = searchParams.get("agentId");
     const filePath = searchParams.get("path");
     const gatewayUrl = searchParams.get("gatewayUrl");
+    const rootWorkspaceParam = searchParams.get("rootWorkspace");
+    const useRootWorkspace =
+      rootWorkspaceParam === "1" ||
+      (typeof rootWorkspaceParam === "string" && rootWorkspaceParam.toLowerCase() === "true");
 
     if (!agentId || !filePath || !gatewayUrl) {
       return NextResponse.json(
@@ -43,8 +47,9 @@ export async function GET(request: NextRequest) {
     }
 
     // Construct full file path
-    const workspaceDir = agentId === "main" 
-      ? ".openclaw/workspace"
+    // Main agent uses absolute path (required by Daytona), others use relative (resolves from home)
+    const workspaceDir = agentId === "main" || useRootWorkspace
+      ? "/home/daytona/.openclaw/workspace"
       : `.openclaw/workspace-${agentId}`;
     
     const fullPath = `${workspaceDir}/${filePath}`;

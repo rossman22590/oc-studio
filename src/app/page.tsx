@@ -70,6 +70,7 @@ import { fetchJson } from "@/lib/http";
 import { bootstrapAgentBrainFilesFromTemplate, initializeAgentWorkspace } from "@/lib/gateway/agentFiles";
 import { deleteAgentViaStudio } from "@/features/agents/operations/deleteAgentOperation";
 import { sendChatMessageViaStudio } from "@/features/agents/operations/chatSendOperation";
+import { SwarmDispatchModal } from "@/features/agents/components/SwarmDispatchModal";
 import { hydrateAgentFleetFromGateway } from "@/features/agents/operations/agentFleetHydration";
 import { useConfigMutationQueue } from "@/features/agents/operations/useConfigMutationQueue";
 import { useGatewayRestartBlock } from "@/features/agents/operations/useGatewayRestartBlock";
@@ -190,6 +191,7 @@ const AgentStudioPage = () => {
 
   const { state, dispatch, hydrateAgents, setError, setLoading } = useAgentStore();
   const [showConnectionModal, setShowConnectionModal] = useState(false);
+  const [showSwarmModal, setShowSwarmModal] = useState(false);
   const [focusFilter, setFocusFilter] = useState<FocusFilter>("all");
   const [focusedPreferencesLoaded, setFocusedPreferencesLoaded] = useState(false);
   const [agentsLoadedOnce, setAgentsLoadedOnce] = useState(false);
@@ -1352,6 +1354,31 @@ const AgentStudioPage = () => {
     [client, dispatch]
   );
 
+  const handleSwarmDispatch = useCallback(
+    async (tasks: { agentId: string; sessionKey: string; message: string }[]) => {
+      if (status !== "connected") {
+        setError("Connect to gateway before dispatching swarm tasks.");
+        return;
+      }
+      await Promise.all(
+        tasks.map((t) =>
+          sendChatMessageViaStudio({
+            client,
+            dispatch,
+            getAgent: (agentId) =>
+              stateRef.current.agents.find((entry) => entry.agentId === agentId) ?? null,
+            agentId: t.agentId,
+            sessionKey: t.sessionKey,
+            message: t.message,
+            clearRunTracking: (runId) =>
+              runtimeEventHandlerRef.current?.clearRunTracking(runId),
+          })
+        )
+      );
+    },
+    [client, dispatch, status, setError]
+  );
+
   const handleStopRun = useCallback(
     async (agentId: string, sessionKey: string) => {
       if (status !== "connected") {
@@ -1689,6 +1716,7 @@ const AgentStudioPage = () => {
             onBrainFiles={handleBrainToggle}
             brainFilesOpen={brainPanelOpen}
             brainDisabled={!hasAnyAgents}
+            showSwarmButton={false}
             sidebarCollapsed={sidebarCollapsed}
             onToggleSidebar={() => setSidebarCollapsed((prev) => !prev)}
             rightPanelOpen={brainPanelOpen || !!settingsAgent}
@@ -1990,6 +2018,15 @@ const AgentStudioPage = () => {
         onConnect={() => void connect()}
         onDisconnect={disconnect}
       />
+
+      {showSwarmModal && (
+        <SwarmDispatchModal
+          agents={agents}
+          onDispatch={handleSwarmDispatch}
+          onClose={() => setShowSwarmModal(false)}
+          disabled={status !== "connected"}
+        />
+      )}
     </div>
   );
 };

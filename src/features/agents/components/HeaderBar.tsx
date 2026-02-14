@@ -1,6 +1,6 @@
 import { ThemeToggle } from "@/components/theme-toggle";
 import type { GatewayStatus } from "@/lib/gateway/GatewayClient";
-import { Brain, Ellipsis, Cable, FolderOpen, Home, PanelLeftClose, PanelLeftOpen, PanelRightClose, Box } from "lucide-react";
+import { Brain, Ellipsis, Cable, FolderOpen, Home, PanelLeftClose, PanelLeftOpen, PanelRightClose, Box, Zap } from "lucide-react";
 import Link from "next/link";
 
 type HeaderBarProps = {
@@ -11,6 +11,9 @@ type HeaderBarProps = {
   brainDisabled?: boolean;
   showFilesButton?: boolean;
   showHomeButton?: boolean;
+  showSwarmButton?: boolean;
+  swarmDisabled?: boolean;
+  onSwarm?: () => void;
   sidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
   rightPanelOpen?: boolean;
@@ -25,6 +28,9 @@ export const HeaderBar = ({
   brainDisabled = false,
   showFilesButton = true,
   showHomeButton = false,
+  showSwarmButton = true,
+  swarmDisabled = false,
+  onSwarm,
   sidebarCollapsed = false,
   onToggleSidebar,
   rightPanelOpen = false,
@@ -130,6 +136,18 @@ export const HeaderBar = ({
             <Box className="h-4 w-4" />
             Office
           </Link>
+          {showSwarmButton && onSwarm ? (
+            <button
+              className="flex items-center gap-2 rounded-md border border-purple-500/50 bg-white dark:bg-white/95 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-purple-600 transition hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-50 disabled:opacity-40 disabled:cursor-not-allowed"
+              type="button"
+              onClick={onSwarm}
+              data-testid="swarm-dispatch-button"
+              disabled={swarmDisabled}
+            >
+              <Zap className="h-4 w-4" />
+              Swarm
+            </button>
+          ) : null}
           <button
             className={`flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] transition ${
               brainFilesOpen

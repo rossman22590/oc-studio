@@ -24,6 +24,43 @@ const PALETTE = {
   screenGlow: "#d4e4f7",   // cool white screen
 };
 
+type Vec3 = [number, number, number];
+type PlantSize = "small" | "medium" | "tall";
+
+/**
+ * Keep a clean center sightline toward the whiteboard.
+ * Decorative props should not be placed in this lane.
+ */
+const WHITEBOARD_NO_PROP_ZONE = {
+  minX: -3.2,
+  maxX: 3.2,
+  minZ: 1.8,
+  maxZ: 8.0,
+} as const;
+
+const resolveNoPropZonePosition = (
+  position: Vec3,
+  footprint: { xRadius: number; zRadius: number },
+  padding = 0.35,
+): Vec3 => {
+  const [x, y, z] = position;
+  const zone = WHITEBOARD_NO_PROP_ZONE;
+  const overlapsX = x + footprint.xRadius > zone.minX && x - footprint.xRadius < zone.maxX;
+  const overlapsZ = z + footprint.zRadius > zone.minZ && z - footprint.zRadius < zone.maxZ;
+  if (!overlapsX || !overlapsZ) return position;
+
+  const leftX = zone.minX - footprint.xRadius - padding;
+  const rightX = zone.maxX + footprint.xRadius + padding;
+  const shiftedX = Math.abs(x - leftX) <= Math.abs(x - rightX) ? leftX : rightX;
+  return [shiftedX, y, z];
+};
+
+const getPlantFootprint = (size: PlantSize) => {
+  if (size === "tall") return { xRadius: 0.65, zRadius: 0.65 };
+  if (size === "medium") return { xRadius: 0.48, zRadius: 0.48 };
+  return { xRadius: 0.3, zRadius: 0.3 };
+};
+
 /* ─── helpers ──────────────────────────────────────────────── */
 
 /** Pendant lamp — hanging from ceiling */
@@ -274,8 +311,8 @@ const Plant = ({
   position,
   size = "medium",
 }: {
-  position: [number, number, number];
-  size?: "small" | "medium" | "tall";
+  position: Vec3;
+  size?: PlantSize;
 }) => {
   const h = size === "tall" ? 1.6 : size === "medium" ? 1.0 : 0.5;
   const potH = size === "tall" ? 0.5 : size === "medium" ? 0.4 : 0.25;
@@ -307,6 +344,17 @@ const Plant = ({
       </Sphere>
     </group>
   );
+};
+
+const GuardedPlant = ({
+  position,
+  size = "medium",
+}: {
+  position: Vec3;
+  size?: PlantSize;
+}) => {
+  const safePosition = resolveNoPropZonePosition(position, getPlantFootprint(size));
+  return <Plant position={safePosition} size={size} />;
 };
 
 /** Simple bookshelf */
@@ -1053,17 +1101,18 @@ export const OfficeEnvironment = ({
       ))}
 
       {/* ── Plants ────────────────────────────────────────── */}
-      <Plant position={[-18, 0, -18]} size="tall" />
-      <Plant position={[18, 0, -18]} size="tall" />
-      <Plant position={[-18, 0, 18]} size="medium" />
-      <Plant position={[18, 0, 18]} size="tall" />
-      {/* divider plants between work and lounge */}
-      <Plant position={[-4, 0, 4]} size="tall" />
-      <Plant position={[4, 0, 4]} size="tall" />
-      <Plant position={[0, 0, 3.5]} size="medium" />
+      <GuardedPlant position={[-18, 0, -18]} size="tall" />
+      <GuardedPlant position={[18, 0, -18]} size="tall" />
+      <GuardedPlant position={[-18, 0, 18]} size="medium" />
+      <GuardedPlant position={[18, 0, 18]} size="tall" />
+      {/* divider plants between work and lounge (keep center lane clear for whiteboard visibility) */}
+      <GuardedPlant position={[-7, 0, 4]} size="tall" />
+      <GuardedPlant position={[7, 0, 4]} size="tall" />
+      <GuardedPlant position={[-9, 0, 2.8]} size="medium" />
+      <GuardedPlant position={[9, 0, 2.8]} size="medium" />
       {/* desk plants */}
-      <Plant position={[-11.5, 0.95, -8.2]} size="small" />
-      <Plant position={[11.5, 0.95, -8.2]} size="small" />
+      <GuardedPlant position={[-11.5, 0.95, -8.2]} size="small" />
+      <GuardedPlant position={[11.5, 0.95, -8.2]} size="small" />
 
       {/* ── Lighting ──────────────────────────────────────── */}
       {/* warm natural overhead — simulating daylight from windows */}

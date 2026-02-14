@@ -42,6 +42,10 @@ export async function GET(request: Request) {
     const agentId = searchParams.get("agentId");
     const path = searchParams.get("path") || "";
     const gatewayUrl = searchParams.get("gatewayUrl");
+    const rootWorkspaceParam = searchParams.get("rootWorkspace");
+    const useRootWorkspace =
+      rootWorkspaceParam === "1" ||
+      (typeof rootWorkspaceParam === "string" && rootWorkspaceParam.toLowerCase() === "true");
 
     if (!isValidAgentId(agentId)) {
       return NextResponse.json(
@@ -65,9 +69,9 @@ export async function GET(request: Request) {
     }
 
     // Determine workspace directory
-    // Daytona paths default to user home directory, but use absolute path for clarity
-    const workspaceDir = agentId === "main" 
-      ? ".openclaw/workspace"
+    // Main agent uses absolute path (required by Daytona), others use relative (resolves from home)
+    const workspaceDir = agentId === "main" || useRootWorkspace
+      ? "/home/daytona/.openclaw/workspace"
       : `.openclaw/workspace-${agentId}`;
     
     const targetPath = path.trim() 

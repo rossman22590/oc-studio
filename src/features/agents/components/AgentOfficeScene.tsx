@@ -17,8 +17,9 @@ import { sendChatMessageViaStudio } from "@/features/agents/operations/chatSendO
 import { createGatewayRuntimeEventHandler, type GatewayRuntimeEventHandler } from "@/features/agents/state/gatewayRuntimeEventHandler";
 import { buildHistorySyncPatch } from "@/features/agents/state/runtimeEventBridge";
 import { createStudioSettingsCoordinator } from "@/lib/studio/coordinator";
+import { SwarmDispatchModal } from "@/features/agents/components/SwarmDispatchModal";
 import Link from "next/link";
-import { Home, Cable, Volume2, VolumeX } from "lucide-react";
+import { Home, Cable, Volume2, VolumeX, Zap } from "lucide-react";
 
 export type AgentBoxData = {
   id: string;
@@ -37,6 +38,7 @@ export const AgentOfficeScene = () => {
   const [chatModalOpen, setChatModalOpen] = useState(false);
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   const [fileManagerOpen, setFileManagerOpen] = useState(false);
+  const [swarmModalOpen, setSwarmModalOpen] = useState(false);
   const [agentBoxes, setAgentBoxes] = useState<AgentBoxData[]>([]);
   const [musicPlaying, setMusicPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -188,6 +190,26 @@ export const AgentOfficeScene = () => {
     }
   };
 
+  // Swarm dispatch — fire tasks to multiple agents in parallel
+  const handleSwarmDispatch = async (
+    tasks: { agentId: string; sessionKey: string; message: string }[]
+  ) => {
+    if (!client || status !== "connected") return;
+    await Promise.all(
+      tasks.map((t) =>
+        sendChatMessageViaStudio({
+          client,
+          dispatch,
+          getAgent: (id) =>
+            stateRef.current.agents.find((a) => a.agentId === id) ?? null,
+          agentId: t.agentId,
+          sessionKey: t.sessionKey,
+          message: t.message,
+        })
+      )
+    );
+  };
+
   // Hydrate agents from gateway on connection
   useEffect(() => {
     if (status !== "connected" || !client) return;
@@ -323,8 +345,8 @@ export const AgentOfficeScene = () => {
 
   return (
     <>
-      {/* Home button overlay */}
-      <div className="absolute top-4 left-4 z-10">
+      {/* Top-left controls overlay */}
+      <div className="absolute top-4 left-4 z-10 flex items-center gap-2">
         <Link
           href="/"
           className="flex items-center gap-2 rounded-md border border-input/90 bg-background/75 backdrop-blur-sm px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-foreground transition hover:border-ring hover:bg-card shadow-lg"
@@ -332,6 +354,15 @@ export const AgentOfficeScene = () => {
           <Home className="h-4 w-4" />
           Home
         </Link>
+        <button
+          onClick={() => setSwarmModalOpen(true)}
+          disabled={status !== "connected" || state.agents.length === 0}
+          className="flex items-center gap-2 rounded-md border border-purple-500/50 bg-white dark:bg-white/95 backdrop-blur-sm px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-purple-600 transition hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-50 shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Dispatch tasks to all agents"
+        >
+          <Zap className="h-4 w-4" />
+          Swarm
+        </button>
       </div>
 
       {/* Title overlay */}
@@ -497,6 +528,16 @@ export const AgentOfficeScene = () => {
       {/* File Manager Modal */}
       {fileManagerOpen && (
         <FileManagerModal onClose={() => setFileManagerOpen(false)} />
+      )}
+
+      {/* Swarm Dispatch Modal */}
+      {swarmModalOpen && (
+        <SwarmDispatchModal
+          agents={state.agents}
+          onDispatch={handleSwarmDispatch}
+          onClose={() => setSwarmModalOpen(false)}
+          disabled={status !== "connected"}
+        />
       )}
 
       {/* Notification Toasts — thought bubble shape */}

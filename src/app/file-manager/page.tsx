@@ -44,6 +44,7 @@ export default function FileManagerPage() {
   
   const [showConnectionModal, setShowConnectionModal] = useState(false);
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [defaultAgentId, setDefaultAgentId] = useState<string>('');
   const [selectedAgent, setSelectedAgent] = useState<string>('');
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [currentPath, setCurrentPath] = useState<string>('');
@@ -65,6 +66,7 @@ export default function FileManagerPage() {
     const loadAgents = async () => {
       try {
         const result = await client.call<{
+          defaultId?: string;
           agents: Array<{
             id: string;
             name?: string;
@@ -80,6 +82,8 @@ export default function FileManagerPage() {
         }));
         
         setAgents(agentList);
+        const resolvedDefaultId = (result.defaultId || '').trim() || agentList[0]?.id || '';
+        setDefaultAgentId(resolvedDefaultId);
       } catch (err) {
         if (cancelled) return;
         console.error('Failed to load agents:', err);
@@ -92,6 +96,9 @@ export default function FileManagerPage() {
       cancelled = true;
     };
   }, [client, status]);
+
+  const shouldUseRootWorkspace = (agentId: string) =>
+    agentId === 'main' || (defaultAgentId !== '' && agentId === defaultAgentId);
 
   // Load files when agent or path changes
   useEffect(() => {
@@ -114,6 +121,7 @@ export default function FileManagerPage() {
         agentId,
         path: path || '',
         gatewayUrl,
+        rootWorkspace: shouldUseRootWorkspace(agentId) ? '1' : '0',
       });
 
       const response = await fetch(`/api/gateway/workspace-files?${params.toString()}`, {
@@ -176,6 +184,7 @@ export default function FileManagerPage() {
         agentId: selectedAgent,
         path: file.path || file.name,
         gatewayUrl,
+        rootWorkspace: shouldUseRootWorkspace(selectedAgent) ? '1' : '0',
       });
 
       const response = await fetch(`/api/gateway/workspace-files/read?${params.toString()}`, {
@@ -213,6 +222,7 @@ export default function FileManagerPage() {
           agentId: selectedAgent,
           path: file.path || file.name,
           gatewayUrl,
+          rootWorkspace: shouldUseRootWorkspace(selectedAgent) ? '1' : '0',
         });
 
         const response = await fetch(`/api/gateway/workspace-files/read?${params.toString()}`, {
