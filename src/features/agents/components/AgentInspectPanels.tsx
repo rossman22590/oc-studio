@@ -663,6 +663,40 @@ const useAgentWorkspaceBrowser = (params: {
   const [selectedFile, setSelectedFile] = useState<WorkspaceSelectedFile | null>(null);
   const [selectedLoading, setSelectedLoading] = useState(false);
   const [selectedError, setSelectedError] = useState<string | null>(null);
+  const [defaultAgentId, setDefaultAgentId] = useState("");
+
+  useEffect(() => {
+    if (!enabled || !client) return;
+    let cancelled = false;
+    const loadDefaultAgent = async () => {
+      try {
+        const result = await client.call<{
+          defaultId?: string;
+          agents?: Array<{ id: string }>;
+        }>("agents.list", {});
+        if (cancelled) return;
+        const resolvedDefault =
+          (result.defaultId?.trim() || "") ||
+          result.agents?.[0]?.id?.trim() ||
+          "";
+        setDefaultAgentId(resolvedDefault);
+      } catch {
+        if (cancelled) return;
+        setDefaultAgentId("");
+      }
+    };
+    void loadDefaultAgent();
+    return () => {
+      cancelled = true;
+    };
+  }, [client, enabled]);
+
+  const shouldUseRootWorkspace = useCallback(
+    (trimmedAgentId: string) =>
+      trimmedAgentId === "main" ||
+      (defaultAgentId !== "" && trimmedAgentId === defaultAgentId),
+    [defaultAgentId]
+  );
 
   const refresh = useCallback(async () => {
     if (!enabled) return;
@@ -695,9 +729,13 @@ const useAgentWorkspaceBrowser = (params: {
         throw new Error("Gateway URL is not configured. Please set it in connection settings.");
       }
       
-      const response = await fetch(
-        `/api/gateway/workspace-files?agentId=${encodeURIComponent(trimmedAgentId)}&path=${encodeURIComponent(cwd)}&gatewayUrl=${encodeURIComponent(gatewayUrl)}`
-      );
+      const params = new URLSearchParams({
+        agentId: trimmedAgentId,
+        path: cwd,
+        gatewayUrl,
+        rootWorkspace: shouldUseRootWorkspace(trimmedAgentId) ? "1" : "0",
+      });
+      const response = await fetch(`/api/gateway/workspace-files?${params.toString()}`);
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.error || `Failed to fetch workspace files: ${response.statusText}`);
@@ -711,7 +749,7 @@ const useAgentWorkspaceBrowser = (params: {
     } finally {
       setLoading(false);
     }
-  }, [agentId, client, cwd, enabled]);
+  }, [agentId, client, cwd, enabled, shouldUseRootWorkspace]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -759,7 +797,13 @@ const useAgentWorkspaceBrowser = (params: {
         ? (localStorage.getItem("openclaw.gateway.url")?.trim() || DEFAULT_GATEWAY_URL)
         : DEFAULT_GATEWAY_URL;
       
-      fetch(`/api/gateway/workspace-files/read?agentId=${encodeURIComponent(trimmedAgentId)}&path=${encodeURIComponent(entry.path)}&gatewayUrl=${encodeURIComponent(gatewayUrl)}`)
+      const params = new URLSearchParams({
+        agentId: trimmedAgentId,
+        path: entry.path,
+        gatewayUrl,
+        rootWorkspace: shouldUseRootWorkspace(trimmedAgentId) ? "1" : "0",
+      });
+      fetch(`/api/gateway/workspace-files/read?${params.toString()}`)
         .then(async (response) => {
           if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
@@ -786,7 +830,7 @@ const useAgentWorkspaceBrowser = (params: {
         })
         .finally(() => setSelectedLoading(false));
     },
-    [agentId]
+    [agentId, shouldUseRootWorkspace]
   );
 
   return {

@@ -307,7 +307,7 @@ export default function FileManagerPage() {
                 setCurrentPath('');
               }}
               disabled={status !== 'connected'}
-              className="px-4 py-2 border border-pink-400/50 rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-pink-500 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:border-pink-500/70 transition-colors"
+              className="px-4 py-2 border border-primary/50 rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:border-primary/70 transition-colors"
             >
               <option value="">
                 {status !== 'connected' ? 'Connect to gateway first...' : 'Choose an agent...'}
@@ -330,13 +330,13 @@ export default function FileManagerPage() {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search files and folders..."
-                  className="w-full pl-10 pr-4 py-3 border border-pink-400/50 rounded-lg bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-pink-500 shadow-sm hover:border-pink-500/70 transition-colors"
+                  className="w-full pl-10 pr-4 py-3 border border-primary/50 rounded-lg bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring shadow-sm hover:border-primary/70 transition-colors"
                 />
               </div>
               <button
                 onClick={() => loadFiles(selectedAgent, currentPath)}
                 disabled={loading}
-                className="flex items-center gap-2 px-4 py-3 bg-pink-500/10 hover:bg-pink-500/20 border border-pink-400/50 rounded-lg text-pink-600 dark:text-pink-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                className="flex items-center gap-2 px-4 py-3 bg-primary/10 hover:bg-primary/20 border border-primary/50 rounded-lg text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
               >
                 <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
                 Refresh
@@ -351,7 +351,7 @@ export default function FileManagerPage() {
                 {currentPath && (
                   <button
                     onClick={goUp}
-                    className="flex items-center gap-1 px-3 py-1.5 rounded bg-pink-500/10 hover:bg-pink-500/20 text-pink-600 dark:text-pink-400 transition-colors font-medium"
+                    className="flex items-center gap-1 px-3 py-1.5 rounded bg-primary/10 hover:bg-primary/20 text-primary transition-colors font-medium"
                   >
                     <ArrowLeft className="w-4 h-4" />
                     Up
@@ -366,7 +366,7 @@ export default function FileManagerPage() {
                         const newPath = pathParts.slice(0, i + 1).join('/');
                         setCurrentPath(newPath);
                       }}
-                      className="hover:text-pink-600 dark:hover:text-pink-400 transition-colors font-medium"
+                      className="hover:text-primary transition-colors font-medium"
                     >
                       {part}
                     </button>
@@ -382,7 +382,7 @@ export default function FileManagerPage() {
               <FolderOpen className="w-16 h-16 mb-4" />
               {status === 'connecting' ? (
                 <div className="flex flex-col items-center gap-4">
-                  <div className="animate-spin w-8 h-8 border-4 border-pink-500 border-t-transparent rounded-full" />
+                  <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" />
                   <p className="text-lg">Connecting to gateway...</p>
                 </div>
               ) : status === 'connected' ? (
@@ -393,7 +393,7 @@ export default function FileManagerPage() {
                   <p className="text-sm">{gatewayError}</p>
                   <button
                     onClick={() => setShowConnectionModal(true)}
-                    className="px-4 py-2 bg-pink-500/10 hover:bg-pink-500/20 border border-pink-400/50 rounded-lg text-pink-600 dark:text-pink-400 transition-colors"
+                    className="px-4 py-2 bg-primary/10 hover:bg-primary/20 border border-primary/50 rounded-lg text-primary transition-colors"
                   >
                     Update Connection Settings
                   </button>
@@ -403,7 +403,7 @@ export default function FileManagerPage() {
                   <p className="text-lg">Connect to gateway to view agent workspaces</p>
                   <button
                     onClick={() => setShowConnectionModal(true)}
-                    className="px-4 py-2 bg-pink-500/10 hover:bg-pink-500/20 border border-pink-400/50 rounded-lg text-pink-600 dark:text-pink-400 transition-colors"
+                    className="px-4 py-2 bg-primary/10 hover:bg-primary/20 border border-primary/50 rounded-lg text-primary transition-colors"
                   >
                     Connect to Gateway
                   </button>
@@ -412,7 +412,7 @@ export default function FileManagerPage() {
             </div>
           ) : loading ? (
             <div className="flex items-center justify-center py-20">
-              <div className="animate-spin w-8 h-8 border-4 border-pink-500 border-t-transparent rounded-full" />
+              <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" />
             </div>
           ) : filteredFiles.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
@@ -427,12 +427,12 @@ export default function FileManagerPage() {
                 <div
                   key={index}
                   onClick={() => handleFileClick(file)}
-                  className="group relative flex flex-col items-center p-4 rounded-lg border border-border/50 bg-card hover:bg-pink-500/5 hover:border-pink-500/50 cursor-pointer transition-all hover:shadow-lg hover:shadow-pink-500/10"
+                  className="group relative flex flex-col items-center p-4 rounded-lg border border-border/50 bg-card hover:bg-primary/5 hover:border-primary/50 cursor-pointer transition-all hover:shadow-lg hover:shadow-primary/10"
                 >
                   {/* File Icon */}
                   <div className="mb-3">
                     {file.isDirectory ? (
-                      <FolderOpen className="w-12 h-12 text-pink-500" />
+                      <FolderOpen className="w-12 h-12 text-primary" />
                     ) : (
                       <FileText className="w-12 h-12 text-gray-500" />
                     )}
@@ -457,7 +457,7 @@ export default function FileManagerPage() {
                         e.stopPropagation();
                         downloadFile(file);
                       }}
-                      className="absolute top-2 right-2 p-1.5 rounded bg-pink-500/10 hover:bg-pink-500/20 text-pink-600 dark:text-pink-400 opacity-0 group-hover:opacity-100 transition-all shadow-sm"
+                      className="absolute top-2 right-2 p-1.5 rounded bg-primary/10 hover:bg-primary/20 text-primary opacity-0 group-hover:opacity-100 transition-all shadow-sm"
                       title="Download"
                     >
                       <Download className="w-4 h-4" />
@@ -491,11 +491,11 @@ export default function FileManagerPage() {
             <div className="flex items-center justify-between px-6 py-4 border-b border-border/80">
               <div className="flex items-center gap-3">
                 {preview.type === 'markdown' ? (
-                  <FileText className="w-5 h-5 text-pink-500" />
+                  <FileText className="w-5 h-5 text-primary" />
                 ) : preview.type === 'code' ? (
-                  <FileCode className="w-5 h-5 text-pink-600" />
+                  <FileCode className="w-5 h-5 text-primary" />
                 ) : (
-                  <FileText className="w-5 h-5 text-pink-400" />
+                  <FileText className="w-5 h-5 text-primary/80" />
                 )}
                 <div>
                   <h2 className="text-lg font-semibold text-foreground">{preview.file.name}</h2>
@@ -505,14 +505,14 @@ export default function FileManagerPage() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => downloadFile(preview.file, preview.content)}
-                  className="flex items-center gap-2 px-3 py-2 rounded-md border border-pink-400/50 bg-pink-500/10 hover:bg-pink-500/20 text-pink-600 dark:text-pink-400 transition-colors text-sm font-medium shadow-sm"
+                  className="flex items-center gap-2 px-3 py-2 rounded-md border border-primary/50 bg-primary/10 hover:bg-primary/20 text-primary transition-colors text-sm font-medium shadow-sm"
                 >
                   <Download className="w-4 h-4" />
                   Download
                 </button>
                 <button
                   onClick={() => setPreview(null)}
-                  className="p-2 rounded-md hover:bg-pink-500/10 text-muted-foreground hover:text-pink-600 dark:hover:text-pink-400 transition-colors"
+                  className="p-2 rounded-md hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -523,7 +523,7 @@ export default function FileManagerPage() {
             <div className="flex-1 overflow-auto p-6">
               {previewLoading ? (
                 <div className="flex items-center justify-center h-full">
-                  <div className="animate-spin w-8 h-8 border-4 border-pink-500 border-t-transparent rounded-full" />
+                  <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" />
                 </div>
               ) : preview.type === 'markdown' ? (
                 <div className="prose prose-sm dark:prose-invert max-w-none">
@@ -543,7 +543,7 @@ export default function FileManagerPage() {
                   <p className="text-lg mb-4">PDF preview not yet supported</p>
                   <button
                     onClick={() => downloadFile(preview.file, preview.content)}
-                    className="flex items-center gap-2 px-6 py-3 rounded-lg bg-gradient-to-r from-pink-500 to-pink-600 text-white hover:from-pink-600 hover:to-pink-700 transition-all shadow-lg shadow-pink-500/30 hover:shadow-xl hover:shadow-pink-500/40 font-medium"
+                    className="flex items-center gap-2 px-6 py-3 rounded-lg bg-gradient-to-r from-primary to-accent text-primary-foreground hover:opacity-90 transition-all shadow-lg shadow-primary/30 hover:shadow-xl hover:shadow-primary/40 font-medium"
                   >
                     <Download className="w-4 h-4" />
                     Download to view
@@ -557,7 +557,7 @@ export default function FileManagerPage() {
                     <p className="text-sm mb-6">The image file may be corrupted or in an unsupported format</p>
                     <button
                       onClick={() => downloadFile(preview.file, preview.content)}
-                      className="flex items-center gap-2 px-6 py-3 rounded-lg bg-gradient-to-r from-pink-500 to-pink-600 text-white hover:from-pink-600 hover:to-pink-700 transition-all shadow-lg shadow-pink-500/30 hover:shadow-xl hover:shadow-pink-500/40 font-medium"
+                      className="flex items-center gap-2 px-6 py-3 rounded-lg bg-gradient-to-r from-primary to-accent text-primary-foreground hover:opacity-90 transition-all shadow-lg shadow-primary/30 hover:shadow-xl hover:shadow-primary/40 font-medium"
                     >
                       <Download className="w-4 h-4" />
                       Download instead

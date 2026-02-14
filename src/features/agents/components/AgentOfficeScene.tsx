@@ -5,7 +5,10 @@ import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import { Suspense, useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { OfficeEnvironment, type DeskAgentInfo, MONITOR_COLORS } from "./office3d/OfficeEnvironment";
-import { AgentBoxes, WASDControls, ALL_SNAP_POINTS } from "./office3d/AgentBoxes";
+import { AgentBoxes, ALL_SNAP_POINTS } from "./office3d/AgentBoxes";
+import { RobotExpressivePlayer } from "./office3d/RobotExpressivePlayer";
+import { RightDragVerticalCamera } from "./office3d/RightDragVerticalCamera";
+import { RoomCameraBounds } from "./office3d/RoomCameraBounds";
 import { ThoughtBubble } from "./office3d/ThoughtBubble";
 import { ChatModal } from "./office3d/ChatModal";
 import { AgentDetailsModal } from "./office3d/AgentDetailsModal";
@@ -357,7 +360,7 @@ export const AgentOfficeScene = () => {
         <button
           onClick={() => setSwarmModalOpen(true)}
           disabled={status !== "connected" || state.agents.length === 0}
-          className="flex items-center gap-2 rounded-md border border-purple-500/50 bg-white dark:bg-white/95 backdrop-blur-sm px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-purple-600 transition hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-50 shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
+          className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 backdrop-blur-sm px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary/10 shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
           title="Dispatch tasks to all agents"
         >
           <Zap className="h-4 w-4" />
@@ -394,8 +397,8 @@ export const AgentOfficeScene = () => {
       {/* Connection status */}
       <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10">
         {status === "connected" ? (
-          <div className="flex items-center gap-2 rounded-md border-2 border-pink-400 bg-white px-4 py-2.5 text-sm font-bold uppercase tracking-[0.12em] text-pink-600 shadow-lg">
-            <span className="h-3 w-3 rounded-full bg-pink-500 animate-pulse" />
+          <div className="flex items-center gap-2 rounded-md border-2 border-primary/60 bg-white px-4 py-2.5 text-sm font-bold uppercase tracking-[0.12em] text-primary shadow-lg">
+            <span className="h-3 w-3 rounded-full bg-primary animate-pulse" />
             Connected • {state.agents.length} agents
           </div>
         ) : (
@@ -466,8 +469,12 @@ export const AgentOfficeScene = () => {
             }}
           />
 
-          {/* Camera Controls — WASD + orbit */}
-          <WASDControls />
+          {/* RobotExpressive player character */}
+          <RobotExpressivePlayer position={[0, 0, 2]} />
+
+          {/* Camera Controls — orbit + right-drag vertical */}
+          <RightDragVerticalCamera />
+          <RoomCameraBounds />
           <OrbitControls
             makeDefault
             enablePan={false}
@@ -480,7 +487,6 @@ export const AgentOfficeScene = () => {
             mouseButtons={{
               LEFT: THREE.MOUSE.ROTATE,
               MIDDLE: THREE.MOUSE.DOLLY,
-              // RIGHT handled by WASDControls for vertical camera movement
             }}
           />
         </Suspense>

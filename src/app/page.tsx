@@ -1716,7 +1716,9 @@ const AgentStudioPage = () => {
             onBrainFiles={handleBrainToggle}
             brainFilesOpen={brainPanelOpen}
             brainDisabled={!hasAnyAgents}
-            showSwarmButton={false}
+            showSwarmButton={true}
+            swarmDisabled={!hasAnyAgents || status !== "connected"}
+            onSwarm={() => setShowSwarmModal(true)}
             sidebarCollapsed={sidebarCollapsed}
             onToggleSidebar={() => setSidebarCollapsed((prev) => !prev)}
             rightPanelOpen={brainPanelOpen || !!settingsAgent}
