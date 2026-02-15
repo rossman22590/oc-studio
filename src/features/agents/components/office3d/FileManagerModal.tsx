@@ -29,6 +29,7 @@ import {
   Upload,
   CheckCircle2,
   AlertCircle,
+  DownloadCloud,
 } from "lucide-react";
 import { useAgentStore } from "@/features/agents/state/store";
 import { useGatewayConnection } from "@/lib/gateway/GatewayClient";
@@ -36,6 +37,7 @@ import { createStudioSettingsCoordinator } from "@/lib/studio/coordinator";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import dynamic from "next/dynamic";
+import JSZip from "jszip";
 
 // Dynamically import PDFViewer with SSR disabled to prevent server-side issues
 const PDFViewer = dynamic(
@@ -125,6 +127,10 @@ export const FileManagerModal = ({ onClose }: FileManagerModalProps) => {
   const [showUploadResults, setShowUploadResults] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Download All state
+  const [downloadingAll, setDownloadingAll] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState({ current: 0, total: 0 });
 
   const agents = state.agents.map((a) => ({ id: a.agentId, name: a.name }));
 
@@ -496,6 +502,127 @@ export const FileManagerModal = ({ onClose }: FileManagerModalProps) => {
     [selectedAgent, handleUploadFiles],
   );
 
+  /* ─── Download All ─── */
+  const recursivelyGetFiles = async (
+    agentId: string,
+    path: string,
+    allFiles: Array<{ path: string; name: string }> = [],
+  ): Promise<Array<{ path: string; name: string }>> => {
+    if (!gatewayUrl) return allFiles;
+
+    const params = new URLSearchParams({
+      agentId,
+      path: path || "",
+      gatewayUrl,
+      rootWorkspace: shouldUseRootWorkspace(agentId) ? "1" : "0",
+    });
+
+    const response = await fetch(`/api/gateway/workspace-files?${params.toString()}`);
+    if (!response.ok) return allFiles;
+
+    const data = await response.json();
+    const entries = data.entries || [];
+
+    for (const entry of entries) {
+      if (entry.isDirectory) {
+        await recursivelyGetFiles(agentId, entry.path, allFiles);
+      } else {
+        allFiles.push({ path: entry.path, name: entry.name });
+      }
+    }
+
+    return allFiles;
+  };
+
+  const handleDownloadAll = useCallback(async () => {
+    if (!selectedAgent || !gatewayUrl || downloadingAll) return;
+
+    setDownloadingAll(true);
+    setDownloadProgress({ current: 0, total: 0 });
+
+    try {
+      const allFiles = await recursivelyGetFiles(selectedAgent, currentPath);
+      setDownloadProgress({ current: 0, total: allFiles.length });
+
+      if (allFiles.length === 0) {
+        alert("No files to download");
+        return;
+      }
+
+      const zip = new JSZip();
+
+      for (let i = 0; i < allFiles.length; i++) {
+        const file = allFiles[i];
+        setDownloadProgress({ current: i + 1, total: allFiles.length });
+
+        try {
+          const params = new URLSearchParams({
+            agentId: selectedAgent,
+            path: file.path,
+            gatewayUrl,
+            rootWorkspace: shouldUseRootWorkspace(selectedAgent) ? "1" : "0",
+          });
+
+          const response = await fetch(`/api/gateway/workspace-files/read?${params.toString()}`);
+          if (!response.ok) continue;
+
+          const data = await response.json();
+          let content = data.content;
+
+          const isBinary =
+            file.path.toLowerCase().endsWith(".pdf") ||
+            file.path.toLowerCase().match(/\.(png|jpg|jpeg|gif|svg|webp|ico|bmp)$/i);
+
+          if (isBinary && typeof content === "string" && content.startsWith("data:")) {
+            const base64Match = content.match(/base64,(.+)$/);
+            if (base64Match) {
+              content = base64Match[1];
+            }
+          }
+
+          // Get relative path for ZIP structure
+          let relativePath = file.path;
+          // Remove workspace-{agentId}/ prefix if present
+          relativePath = relativePath.replace(/^workspace-[^/]+\//, "");
+          // Remove currentPath prefix if we're in a subdirectory
+          if (currentPath) {
+            const pathPrefix = currentPath + "/";
+            if (relativePath.startsWith(pathPrefix)) {
+              relativePath = relativePath.substring(pathPrefix.length);
+            }
+          }
+
+          if (isBinary && typeof content === "string") {
+            zip.file(relativePath, content, { base64: true });
+          } else {
+            zip.file(relativePath, content);
+          }
+        } catch (err) {
+          console.error(`Failed to download ${file.name}:`, err);
+        }
+      }
+
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const zipName = currentPath
+        ? `${currentPath.split("/").pop() || "workspace"}.zip`
+        : `workspace-${selectedAgent}-all.zip`;
+      a.download = zipName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Download all failed:", err);
+      alert("Failed to download files. Please try again.");
+    } finally {
+      setDownloadingAll(false);
+      setDownloadProgress({ current: 0, total: 0 });
+    }
+  }, [selectedAgent, gatewayUrl, currentPath, downloadingAll, shouldUseRootWorkspace]);
+
   /* ── Filter ── */
   const filteredFiles = files.filter((f) =>
     f.name.toLowerCase().includes(searchQuery.toLowerCase()),
@@ -593,6 +720,23 @@ export const FileManagerModal = ({ onClose }: FileManagerModalProps) => {
                 <Upload className="h-3.5 w-3.5" />
               )}
               Upload
+            </button>
+            <button
+              onClick={() => void handleDownloadAll()}
+              disabled={downloadingAll || !selectedAgent}
+              className="flex items-center gap-1 rounded p-1.5 hover:bg-muted transition disabled:opacity-50 text-xs font-semibold text-primary"
+              title="Download all files"
+              aria-label="Download all files"
+              tabIndex={0}
+            >
+              {downloadingAll ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <DownloadCloud className="h-3.5 w-3.5" />
+              )}
+              {downloadingAll
+                ? `${downloadProgress.current}/${downloadProgress.total}`
+                : "Download All"}
             </button>
             <input
               ref={fileInputRef}

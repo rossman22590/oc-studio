@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Search, FolderOpen, FileText, Download, ArrowLeft, ChevronRight, X, Code, FileCode, RefreshCw, Image as ImageIcon, Pencil, Eye, Save, Bold, Italic, Heading1, Heading2, Heading3, List, ListOrdered, Quote, Minus, Link2, CheckSquare, Loader2, Upload, CheckCircle2, AlertCircle } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Search, FolderOpen, FileText, Download, ArrowLeft, ChevronRight, X, Code, FileCode, RefreshCw, Image as ImageIcon, Pencil, Eye, Save, Bold, Italic, Heading1, Heading2, Heading3, List, ListOrdered, Quote, Minus, Link2, CheckSquare, Loader2, Upload, CheckCircle2, AlertCircle, DownloadCloud } from 'lucide-react';
 import { HeaderBar } from '@/features/agents/components/HeaderBar';
 import { ConnectionSettingsModal } from '@/features/agents/components/ConnectionSettingsModal';
 import { useGatewayConnection } from '@/lib/gateway/GatewayClient';
@@ -9,6 +10,7 @@ import { createStudioSettingsCoordinator } from '@/lib/studio/coordinator';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import dynamic from 'next/dynamic';
+import JSZip from 'jszip';
 
 // Dynamically import PDFViewer with SSR disabled to prevent server-side issues
 const PDFViewer = dynamic(
@@ -36,6 +38,7 @@ interface FilePreview {
 }
 
 export default function FileManagerPage() {
+  const router = useRouter();
   const [settingsCoordinator] = useState(() => createStudioSettingsCoordinator());
   const {
     client,
@@ -74,6 +77,10 @@ export default function FileManagerPage() {
   const [showUploadResults, setShowUploadResults] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Download All state
+  const [downloadingAll, setDownloadingAll] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState({ current: 0, total: 0 });
 
   // Load agents from gateway
   useEffect(() => {
@@ -464,6 +471,129 @@ export default function FileManagerPage() {
     void handleUploadFiles(e.dataTransfer.files);
   }, [selectedAgent, handleUploadFiles]);
 
+  /* ─── Download All ─── */
+  const recursivelyGetFiles = async (agentId: string, path: string, allFiles: Array<{ path: string; name: string }> = []): Promise<Array<{ path: string; name: string }>> => {
+    if (!gatewayUrl) return allFiles;
+
+    const params = new URLSearchParams({
+      agentId,
+      path: path || '',
+      gatewayUrl,
+      rootWorkspace: shouldUseRootWorkspace(agentId) ? '1' : '0',
+    });
+
+    const response = await fetch(`/api/gateway/workspace-files?${params.toString()}`);
+    if (!response.ok) return allFiles;
+
+    const data = await response.json();
+    const entries = data.entries || [];
+
+    for (const entry of entries) {
+      if (entry.isDirectory) {
+        await recursivelyGetFiles(agentId, entry.path, allFiles);
+      } else {
+        allFiles.push({ path: entry.path, name: entry.name });
+      }
+    }
+
+    return allFiles;
+  };
+
+  const handleDownloadAll = useCallback(async () => {
+    if (!selectedAgent || !gatewayUrl || downloadingAll) return;
+
+    setDownloadingAll(true);
+    setDownloadProgress({ current: 0, total: 0 });
+
+    try {
+      // Get all files recursively
+      const allFiles = await recursivelyGetFiles(selectedAgent, currentPath);
+      setDownloadProgress({ current: 0, total: allFiles.length });
+
+      if (allFiles.length === 0) {
+        alert('No files to download');
+        return;
+      }
+
+      // Create ZIP
+      const zip = new JSZip();
+
+      // Download each file and add to ZIP
+      for (let i = 0; i < allFiles.length; i++) {
+        const file = allFiles[i];
+        setDownloadProgress({ current: i + 1, total: allFiles.length });
+
+        try {
+          const params = new URLSearchParams({
+            agentId: selectedAgent,
+            path: file.path,
+            gatewayUrl,
+            rootWorkspace: shouldUseRootWorkspace(selectedAgent) ? '1' : '0',
+          });
+
+          const response = await fetch(`/api/gateway/workspace-files/read?${params.toString()}`);
+          if (!response.ok) continue;
+
+          const data = await response.json();
+          let content = data.content;
+
+          // Handle binary files (PDFs, images)
+          const isBinary = file.path.toLowerCase().endsWith('.pdf') || 
+                          file.path.toLowerCase().match(/\.(png|jpg|jpeg|gif|svg|webp|ico|bmp)$/i);
+          
+          if (isBinary && typeof content === 'string' && content.startsWith('data:')) {
+            // Extract base64 from data URL
+            const base64Match = content.match(/base64,(.+)$/);
+            if (base64Match) {
+              content = base64Match[1];
+            }
+          }
+
+          // Get relative path for ZIP structure
+          // Remove workspace prefix and current path prefix
+          let relativePath = file.path;
+          // Remove workspace-{agentId}/ prefix if present
+          relativePath = relativePath.replace(/^workspace-[^/]+\//, '');
+          // Remove currentPath prefix if we're in a subdirectory
+          if (currentPath) {
+            const pathPrefix = currentPath + '/';
+            if (relativePath.startsWith(pathPrefix)) {
+              relativePath = relativePath.substring(pathPrefix.length);
+            }
+          }
+
+          if (isBinary && typeof content === 'string') {
+            zip.file(relativePath, content, { base64: true });
+          } else {
+            zip.file(relativePath, content);
+          }
+        } catch (err) {
+          console.error(`Failed to download ${file.name}:`, err);
+        }
+      }
+
+      // Generate and download ZIP
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const zipName = currentPath 
+        ? `${currentPath.split('/').pop() || 'workspace'}.zip`
+        : `workspace-${selectedAgent}-all.zip`;
+      a.download = zipName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Download all failed:', err);
+      alert('Failed to download files. Please try again.');
+    } finally {
+      setDownloadingAll(false);
+      setDownloadProgress({ current: 0, total: 0 });
+    }
+  }, [selectedAgent, gatewayUrl, currentPath, downloadingAll, shouldUseRootWorkspace]);
+
   const filteredFiles = files.filter(file =>
     file.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -477,11 +607,20 @@ export default function FileManagerPage() {
           <HeaderBar
             status={status}
             onConnectionSettings={() => setShowConnectionModal((prev) => !prev)}
-            onBrainFiles={() => {}}
+            onBrainFiles={() => router.push('/studio')}
             brainFilesOpen={false}
-            brainDisabled={true}
-            showFilesButton={false}
+            brainDisabled={agents.length === 0}
+            showFilesButton={true}
             showHomeButton={true}
+            showSwarmButton={true}
+            swarmDisabled={agents.length === 0 || status !== 'connected'}
+            onSwarm={() => router.push('/studio')}
+            showChatroomButton={true}
+            chatroomDisabled={agents.length === 0 || status !== 'connected'}
+            onChatroom={() => router.push('/studio')}
+            showKanbanButton={true}
+            kanbanDisabled={agents.length === 0 || status !== 'connected'}
+            onKanban={() => router.push('/studio')}
           />
         </div>
 
@@ -571,6 +710,23 @@ export default function FileManagerPage() {
                   <Upload className="w-5 h-5" />
                 )}
                 {uploading ? 'Uploading…' : 'Upload'}
+              </button>
+              {/* Download All button */}
+              <button
+                onClick={() => void handleDownloadAll()}
+                disabled={downloadingAll || !selectedAgent}
+                className="flex items-center gap-2 px-4 py-3 bg-primary/10 hover:bg-primary/20 border border-primary/50 rounded-lg text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                aria-label="Download all files"
+                tabIndex={0}
+              >
+                {downloadingAll ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  <DownloadCloud className="w-5 h-5" />
+                )}
+                {downloadingAll 
+                  ? `Downloading… ${downloadProgress.current}/${downloadProgress.total}`
+                  : 'Download All'}
               </button>
               <input
                 ref={fileInputRef}

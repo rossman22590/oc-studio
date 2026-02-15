@@ -31,7 +31,14 @@ export const Navigation = ({ status, onConnectClick }: NavigationProps) => {
       <div className="max-w-7xl mx-auto px-6 sm:px-8 lg:px-10">
         <div className="flex items-center justify-between h-16 sm:h-20">
           {/* Brand */}
-          <a href="#" className="group flex items-center gap-2.5 select-none">
+          <a
+            href="#"
+            onClick={(e) => {
+              e.preventDefault();
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
+            className="group flex items-center gap-2.5 select-none"
+          >
             <div className="relative transition-all duration-300 group-hover:scale-110">
               <img src="/logo.png" alt="MachineClaw" className="h-9 w-9 object-contain" />
             </div>
@@ -42,13 +49,31 @@ export const Navigation = ({ status, onConnectClick }: NavigationProps) => {
 
           {/* Desktop nav links */}
           <div className="hidden md:flex items-center gap-1">
-            {["Features", "How It Works", "Tech"].map((label) => (
+            {[
+              { label: "Features", id: "features" },
+              { label: "Showcase", id: "showcase" },
+              { label: "How It Works", id: "how-it-works" },
+              { label: "Pricing", id: "pricing" },
+            ].map((item) => (
               <a
-                key={label}
-                href={`#${label.toLowerCase().replace(/\s+/g, "-")}`}
+                key={item.id}
+                href={`#${item.id}`}
+                onClick={(e) => {
+                  e.preventDefault();
+                  const element = document.getElementById(item.id);
+                  if (element) {
+                    const navHeight = 80; // Account for fixed nav height
+                    const elementPosition = element.getBoundingClientRect().top + window.pageYOffset;
+                    const offsetPosition = elementPosition - navHeight;
+                    window.scrollTo({
+                      top: offsetPosition,
+                      behavior: "smooth",
+                    });
+                  }
+                }}
                 className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors duration-200 rounded-lg hover:bg-foreground/5"
               >
-                {label}
+                {item.label}
               </a>
             ))}
           </div>
@@ -102,14 +127,32 @@ export const Navigation = ({ status, onConnectClick }: NavigationProps) => {
           }`}
         >
           <div className="flex flex-col gap-1 pt-2">
-            {["Features", "How It Works", "Tech"].map((label) => (
+            {[
+              { label: "Features", id: "features" },
+              { label: "Showcase", id: "showcase" },
+              { label: "How It Works", id: "how-it-works" },
+              { label: "Pricing", id: "pricing" },
+            ].map((item) => (
               <a
-                key={label}
-                href={`#${label.toLowerCase().replace(/\s+/g, "-")}`}
-                onClick={() => setMobileOpen(false)}
+                key={item.id}
+                href={`#${item.id}`}
+                onClick={(e) => {
+                  e.preventDefault();
+                  setMobileOpen(false);
+                  const element = document.getElementById(item.id);
+                  if (element) {
+                    const navHeight = 80; // Account for fixed nav height
+                    const elementPosition = element.getBoundingClientRect().top + window.pageYOffset;
+                    const offsetPosition = elementPosition - navHeight;
+                    window.scrollTo({
+                      top: offsetPosition,
+                      behavior: "smooth",
+                    });
+                  }
+                }}
                 className="px-4 py-2.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors rounded-lg hover:bg-foreground/5"
               >
-                {label}
+                {item.label}
               </a>
             ))}
           </div>

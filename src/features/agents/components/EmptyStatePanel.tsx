@@ -1,3 +1,6 @@
+"use client";
+
+import { useState, useEffect } from "react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
@@ -22,6 +25,14 @@ export const EmptyStatePanel = ({
   compact = false,
   className,
 }: EmptyStatePanelProps) => {
+  // Fix hydration mismatch: detail might come from localStorage which differs between server/client
+  const [mountedDetail, setMountedDetail] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    // Only set detail after client-side hydration to avoid mismatch
+    setMountedDetail(detail);
+  }, [detail]);
+
   return (
     <div
       className={cn(
@@ -48,9 +59,12 @@ export const EmptyStatePanel = ({
           {description}
         </p>
       ) : null}
-      {detail ? (
-        <p className="mt-3 rounded-md border border-border/80 bg-background/75 px-4 py-2 font-mono text-[11px] text-muted-foreground/90">
-          {detail}
+      {mountedDetail ? (
+        <p 
+          className="mt-3 rounded-md border border-border/80 bg-background/75 px-4 py-2 font-mono text-[11px] text-muted-foreground/90"
+          suppressHydrationWarning
+        >
+          {mountedDetail}
         </p>
       ) : null}
     </div>

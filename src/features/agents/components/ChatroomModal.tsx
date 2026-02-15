@@ -38,6 +38,30 @@ const AGENT_COLORS = [
   "#d946ef", "#f59e0b", "#3b82f6", "#10b981",
 ];
 
+/* ─── localStorage helpers ───────────────────────────────────── */
+
+const STORAGE_KEY = "openclaw.chatroom.groupMessages";
+
+const loadGroupMessages = (): GroupMessage[] => {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as GroupMessage[];
+  } catch {
+    return [];
+  }
+};
+
+const saveGroupMessages = (messages: GroupMessage[]) => {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
+  } catch (err) {
+    console.warn("Failed to save group messages to localStorage:", err);
+  }
+};
+
 const formatTimestamp = (ts: number) => {
   const d = new Date(ts);
   const hh = d.getHours().toString().padStart(2, "0");
@@ -58,11 +82,16 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
   const inputRef = useRef<HTMLInputElement>(null);
 
   /* ─── Group Chat state ─── */
-  const [groupMessages, setGroupMessages] = useState<GroupMessage[]>([]);
+  const [groupMessages, setGroupMessages] = useState<GroupMessage[]>(() => loadGroupMessages());
   // Track which agents are pending a group response: agentId → prevOutputLinesCount
   const pendingGroupRef = useRef<Map<string, number>>(new Map());
   // Track which outputLines we've already captured so we don't double-add
   const capturedLinesRef = useRef<Map<string, number>>(new Map());
+
+  /* ─── Persist group messages to localStorage ─── */
+  useEffect(() => {
+    saveGroupMessages(groupMessages);
+  }, [groupMessages]);
 
   const isGroupChat = selectedAgentId === GROUP_CHAT_ID;
   const selectedAgent = agents.find((a) => a.agentId === selectedAgentId);

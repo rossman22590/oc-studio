@@ -32,13 +32,31 @@ export const Footer = ({ status, onConnectClick }: FooterProps) => {
             <div>
               <h4 className="text-xs font-semibold text-foreground uppercase tracking-wider mb-3">Product</h4>
               <ul className="space-y-2">
-                {["Features", "How It Works"].map((label) => (
-                  <li key={label}>
+                {[
+                  { label: "Features", id: "features" },
+                  { label: "Showcase", id: "showcase" },
+                  { label: "How It Works", id: "how-it-works" },
+                  { label: "Pricing", id: "pricing" },
+                ].map((item) => (
+                  <li key={item.id}>
                     <a
-                      href={`#${label.toLowerCase().replace(/\s+/g, "-")}`}
+                      href={`#${item.id}`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        const element = document.getElementById(item.id);
+                        if (element) {
+                          const navHeight = 80;
+                          const elementPosition = element.getBoundingClientRect().top + window.pageYOffset;
+                          const offsetPosition = elementPosition - navHeight;
+                          window.scrollTo({
+                            top: offsetPosition,
+                            behavior: "smooth",
+                          });
+                        }
+                      }}
                       className="text-sm text-muted-foreground hover:text-foreground transition-colors duration-200"
                     >
-                      {label}
+                      {item.label}
                     </a>
                   </li>
                 ))}
@@ -54,16 +72,6 @@ export const Footer = ({ status, onConnectClick }: FooterProps) => {
                   >
                     {status === "connected" ? "Enter Studio" : "Get Started"}
                   </button>
-                </li>
-                <li>
-                  <a
-                    href="https://discord.gg/VEpdKJ9e"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm text-muted-foreground hover:text-foreground transition-colors duration-200"
-                  >
-                    Discord
-                  </a>
                 </li>
               </ul>
             </div>

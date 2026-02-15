@@ -229,7 +229,7 @@ export const Showcase = () => {
   const ActiveMockup = MOCKUPS[activeTab] ?? OfficeMockup;
 
   return (
-    <section ref={ref} className="relative py-24 sm:py-32 md:py-40 px-6">
+    <section id="showcase" ref={ref} className="relative py-24 sm:py-32 md:py-40 px-6">
       {/* Background glow */}
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[500px] bg-accent/5 rounded-full blur-[120px] pointer-events-none" />
 
