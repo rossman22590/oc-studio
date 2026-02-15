@@ -3,8 +3,72 @@ import { Bebas_Neue, IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "MachineClaw Studio",
-  description: "Focused operator studio for the OpenClaw gateway.",
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "https://machineclaw.myapps.ai"),
+  title: {
+    default: "MachineClaw — Command Your AI Agent Fleet",
+    template: "%s | MachineClaw",
+  },
+  description: "Orchestrate, monitor, and collaborate with your AI agents through an immersive 3D workspace. Real-time control, swarm dispatch, kanban boards, and more.",
+  keywords: [
+    "AI agents",
+    "agent orchestration",
+    "multi-agent systems",
+    "AI fleet management",
+    "3D workspace",
+    "agent control center",
+    "AI automation",
+    "agent collaboration",
+    "real-time AI",
+    "agent monitoring",
+  ],
+  authors: [{ name: "MachineClaw" }],
+  creator: "MachineClaw",
+  publisher: "MachineClaw",
+  formatDetection: {
+    email: false,
+    address: false,
+    telephone: false,
+  },
+  openGraph: {
+    type: "website",
+    locale: "en_US",
+    url: "/",
+    siteName: "MachineClaw",
+    title: "MachineClaw — Command Your AI Agent Fleet",
+    description: "Orchestrate, monitor, and collaborate with your AI agents through an immersive 3D workspace. Real-time control, swarm dispatch, kanban boards, and more.",
+    images: [
+      {
+        url: "/og-image",
+        width: 1200,
+        height: 630,
+        alt: "MachineClaw — AI Agent Command Center",
+        type: "image/png",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "MachineClaw — Command Your AI Agent Fleet",
+    description: "Orchestrate, monitor, and collaborate with your AI agents through an immersive 3D workspace.",
+    images: ["/og-image"],
+    creator: "@machineclaw",
+    site: "@machineclaw",
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-video-preview": -1,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+    },
+  },
+  alternates: {
+    canonical: "/",
+  },
+  category: "technology",
 };
 
 const display = Bebas_Neue({
