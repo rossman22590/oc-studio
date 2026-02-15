@@ -1,13 +1,20 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Search, FolderOpen, FileText, Download, ArrowLeft, ChevronRight, X, Code, FileCode, RefreshCw, Image as ImageIcon } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Search, FolderOpen, FileText, Download, ArrowLeft, ChevronRight, X, Code, FileCode, RefreshCw, Image as ImageIcon, Pencil, Eye, Save, Bold, Italic, Heading1, Heading2, Heading3, List, ListOrdered, Quote, Minus, Link2, CheckSquare, Loader2, Upload, CheckCircle2, AlertCircle } from 'lucide-react';
 import { HeaderBar } from '@/features/agents/components/HeaderBar';
 import { ConnectionSettingsModal } from '@/features/agents/components/ConnectionSettingsModal';
 import { useGatewayConnection } from '@/lib/gateway/GatewayClient';
 import { createStudioSettingsCoordinator } from '@/lib/studio/coordinator';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import dynamic from 'next/dynamic';
+
+// Dynamically import PDFViewer with SSR disabled to prevent server-side issues
+const PDFViewer = dynamic(
+  () => import('@/features/agents/components/PDFViewer').then((mod) => ({ default: mod.PDFViewer })),
+  { ssr: false }
+);
 
 interface Agent {
   id: string;
@@ -54,6 +61,19 @@ export default function FileManagerPage() {
   const [preview, setPreview] = useState<FilePreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [brokenImage, setBrokenImage] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [editContent, setEditContent] = useState('');
+  const [editDirty, setEditDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+
+  // Upload state
+  const [uploading, setUploading] = useState(false);
+  const [uploadResults, setUploadResults] = useState<{ name: string; success: boolean; error?: string }[]>([]);
+  const [showUploadResults, setShowUploadResults] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load agents from gateway
   useEffect(() => {
@@ -196,10 +216,25 @@ export default function FileManagerPage() {
       }
 
       const data = await response.json();
+      const fileType = getFileType(file.name);
+      
+      // For PDFs, convert content to base64 data URL if needed
+      let content = data.content;
+      if (fileType === 'pdf') {
+        // If content is already a data URL, use it; otherwise convert
+        if (typeof content === 'string' && !content.startsWith('data:')) {
+          // Assume it's base64, create data URL
+          content = `data:application/pdf;base64,${content}`;
+        } else if (typeof content === 'string' && content.startsWith('data:')) {
+          // Already a data URL
+          content = content;
+        }
+      }
+      
       setPreview({
         file,
-        content: data.content,
-        type: getFileType(file.name),
+        content,
+        type: fileType,
       });
     } catch (err) {
       console.error('Preview failed:', err);
@@ -262,6 +297,173 @@ export default function FileManagerPage() {
     setCurrentPath(parts.join('/'));
   };
 
+  /* ─── File saving ─── */
+  const saveFile = useCallback(async () => {
+    if (!preview || !gatewayUrl || saving) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const response = await fetch('/api/gateway/workspace-files/write', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentId: selectedAgent,
+          path: preview.file.path || preview.file.name,
+          content: editContent,
+          gatewayUrl,
+          rootWorkspace: shouldUseRootWorkspace(selectedAgent),
+        }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || data.details || 'Failed to save file');
+      }
+      setPreview({ ...preview, content: editContent });
+      setEditDirty(false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to save file';
+      setSaveError(msg);
+    } finally {
+      setSaving(false);
+    }
+  }, [preview, gatewayUrl, saving, editContent, selectedAgent, shouldUseRootWorkspace]);
+
+  /* ─── Debounced auto-save (2s after typing stops) ─── */
+  const saveRef = useRef(saveFile);
+  saveRef.current = saveFile;
+  useEffect(() => {
+    if (!editDirty || saving || !editMode) return;
+    const timer = window.setTimeout(() => {
+      void saveRef.current();
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [editDirty, saving, editMode, editContent]);
+
+  /* ─── Markdown toolbar helpers ─── */
+  const insertMarkdown = useCallback((prefix: string, suffix: string = '', placeholder: string = '') => {
+    const textarea = editorRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selected = editContent.substring(start, end);
+    const text = selected || placeholder;
+    const before = editContent.substring(0, start);
+    const after = editContent.substring(end);
+    const newContent = `${before}${prefix}${text}${suffix}${after}`;
+    setEditContent(newContent);
+    setEditDirty(true);
+    // Restore cursor position after React re-render
+    requestAnimationFrame(() => {
+      textarea.focus();
+      const newCursorPos = start + prefix.length + text.length;
+      textarea.setSelectionRange(
+        start + prefix.length,
+        newCursorPos,
+      );
+    });
+  }, [editContent]);
+
+  const insertLinePrefix = useCallback((prefix: string) => {
+    const textarea = editorRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const lines = editContent.substring(start, end).split('\n');
+    const prefixed = lines.map((line) => `${prefix}${line}`).join('\n');
+    const before = editContent.substring(0, start);
+    const after = editContent.substring(end);
+    const newContent = `${before}${prefixed}${after}`;
+    setEditContent(newContent);
+    setEditDirty(true);
+  }, [editContent]);
+
+  /* ─── Toggle edit mode ─── */
+  const handleToggleEdit = useCallback(() => {
+    if (!editMode && preview) {
+      setEditContent(preview.content);
+      setEditDirty(false);
+      setSaveError(null);
+    }
+    setEditMode((prev) => !prev);
+  }, [editMode, preview]);
+
+  /* ─── Close preview (save first if dirty) ─── */
+  const handleClosePreview = useCallback(async () => {
+    if (editDirty && editMode) {
+      await saveFile();
+    }
+    setPreview(null);
+    setEditMode(false);
+    setEditDirty(false);
+    setSaveError(null);
+  }, [editDirty, editMode, saveFile]);
+
+  /* ─── Is file editable? ─── */
+  const isEditable = preview && preview.type !== 'image' && preview.type !== 'pdf';
+
+  /* ─── Upload files ─── */
+  const handleUploadFiles = useCallback(async (fileList: FileList | File[]) => {
+    if (!selectedAgent || !gatewayUrl || uploading) return;
+    const filesToUpload = Array.from(fileList);
+    if (filesToUpload.length === 0) return;
+
+    setUploading(true);
+    setUploadResults([]);
+    setShowUploadResults(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('agentId', selectedAgent);
+      formData.append('gatewayUrl', gatewayUrl);
+      formData.append('rootWorkspace', shouldUseRootWorkspace(selectedAgent) ? '1' : '0');
+      formData.append('path', currentPath);
+
+      for (const file of filesToUpload) {
+        formData.append('files', file);
+      }
+
+      const response = await fetch('/api/gateway/workspace-files/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await response.json();
+      setUploadResults(data.results || []);
+
+      // Refresh file list after upload
+      await loadFiles(selectedAgent, currentPath);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Upload failed';
+      setUploadResults(Array.from(fileList).map((f) => ({ name: f.name, success: false, error: msg })));
+    } finally {
+      setUploading(false);
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  }, [selectedAgent, gatewayUrl, uploading, currentPath, shouldUseRootWorkspace, loadFiles]);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (selectedAgent) setDragOver(true);
+  }, [selectedAgent]);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    if (!selectedAgent || !e.dataTransfer.files.length) return;
+    void handleUploadFiles(e.dataTransfer.files);
+  }, [selectedAgent, handleUploadFiles]);
+
   const filteredFiles = files.filter(file =>
     file.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -291,7 +493,21 @@ export default function FileManagerPage() {
           </div>
         )}
 
-        <div className="glass-panel fade-up min-h-0 flex-1 overflow-hidden p-4 sm:p-6">
+        <div
+          className={`glass-panel fade-up min-h-0 flex-1 overflow-hidden p-4 sm:p-6 relative ${dragOver ? 'ring-2 ring-primary ring-offset-2' : ''}`}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
+          {/* Drag overlay */}
+          {dragOver && (
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-primary/10 backdrop-blur-sm rounded-lg border-2 border-dashed border-primary pointer-events-none">
+              <Upload className="w-16 h-16 text-primary mb-4 animate-bounce" />
+              <p className="text-lg font-bold text-primary">Drop files here to upload</p>
+              <p className="text-sm text-muted-foreground mt-1">Files will be uploaded to the current directory</p>
+            </div>
+          )}
+
           <h1 className="text-2xl font-bold mb-6 console-title text-foreground">File Manager</h1>
           
           {/* Agent Selection */}
@@ -341,6 +557,32 @@ export default function FileManagerPage() {
                 <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
                 Refresh
               </button>
+              {/* Upload button */}
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className="flex items-center gap-2 px-4 py-3 bg-primary/10 hover:bg-primary/20 border border-primary/50 rounded-lg text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                aria-label="Upload files"
+                tabIndex={0}
+              >
+                {uploading ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  <Upload className="w-5 h-5" />
+                )}
+                {uploading ? 'Uploading…' : 'Upload'}
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files && e.target.files.length > 0) {
+                    void handleUploadFiles(e.target.files);
+                  }
+                }}
+              />
             </div>
           )}
 
@@ -483,7 +725,50 @@ export default function FileManagerPage() {
         onDisconnect={disconnect}
       />
 
-      {/* File Preview Modal */}
+      {/* Upload results toast */}
+      {showUploadResults && uploadResults.length > 0 && (
+        <div className="fixed bottom-6 right-6 z-[60] w-80 rounded-lg border border-border bg-card shadow-2xl overflow-hidden animate-scale-in">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border/50 bg-muted/30">
+            <span className="text-sm font-semibold text-foreground">
+              Upload {uploading ? 'in progress…' : 'complete'}
+            </span>
+            {!uploading && (
+              <button
+                onClick={() => setShowUploadResults(false)}
+                className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition"
+                aria-label="Dismiss"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+          <div className="max-h-48 overflow-y-auto p-2 space-y-1">
+            {uploading && uploadResults.length === 0 && (
+              <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                Uploading files…
+              </div>
+            )}
+            {uploadResults.map((r, i) => (
+              <div key={i} className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-muted/30">
+                {r.success ? (
+                  <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                )}
+                <span className="text-xs truncate flex-1" title={r.name}>{r.name}</span>
+                {r.error && (
+                  <span className="text-[10px] text-red-500 truncate max-w-[120px]" title={r.error}>
+                    {r.error}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* File Preview / Edit Modal */}
       {preview && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
           <div className="relative w-full max-w-5xl max-h-[90vh] m-4 rounded-lg border border-border bg-card shadow-2xl flex flex-col">
@@ -499,19 +784,61 @@ export default function FileManagerPage() {
                 )}
                 <div>
                   <h2 className="text-lg font-semibold text-foreground">{preview.file.name}</h2>
-                  <p className="text-xs text-muted-foreground">{formatFileSize(preview.file.size)}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs text-muted-foreground">{formatFileSize(preview.file.size)}</p>
+                    {editMode && editDirty && (
+                      <span className="text-[10px] font-semibold text-amber-500 uppercase tracking-wider">Unsaved</span>
+                    )}
+                    {editMode && !editDirty && !saving && (
+                      <span className="text-[10px] font-semibold text-green-500 uppercase tracking-wider">Saved</span>
+                    )}
+                    {saving && (
+                      <span className="flex items-center gap-1 text-[10px] font-semibold text-primary uppercase tracking-wider">
+                        <Loader2 className="w-3 h-3 animate-spin" /> Saving…
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                {/* Edit / Preview toggle */}
+                {isEditable && (
+                  <button
+                    onClick={handleToggleEdit}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-md border text-sm font-medium shadow-sm transition-colors ${
+                      editMode
+                        ? 'border-primary bg-primary text-primary-foreground hover:bg-primary/90'
+                        : 'border-primary/50 bg-primary/10 hover:bg-primary/20 text-primary'
+                    }`}
+                    aria-label={editMode ? 'Switch to preview' : 'Switch to edit'}
+                    tabIndex={0}
+                  >
+                    {editMode ? <Eye className="w-4 h-4" /> : <Pencil className="w-4 h-4" />}
+                    {editMode ? 'Preview' : 'Edit'}
+                  </button>
+                )}
+                {/* Save button (only in edit mode) */}
+                {editMode && (
+                  <button
+                    onClick={() => void saveFile()}
+                    disabled={!editDirty || saving}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-md border border-green-500/50 bg-green-500/10 hover:bg-green-500/20 text-green-600 dark:text-green-400 transition-colors text-sm font-medium shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                    aria-label="Save file"
+                    tabIndex={0}
+                  >
+                    <Save className="w-4 h-4" />
+                    Save
+                  </button>
+                )}
                 <button
-                  onClick={() => downloadFile(preview.file, preview.content)}
+                  onClick={() => downloadFile(preview.file, editMode ? editContent : preview.content)}
                   className="flex items-center gap-2 px-3 py-2 rounded-md border border-primary/50 bg-primary/10 hover:bg-primary/20 text-primary transition-colors text-sm font-medium shadow-sm"
                 >
                   <Download className="w-4 h-4" />
                   Download
                 </button>
                 <button
-                  onClick={() => setPreview(null)}
+                  onClick={() => void handleClosePreview()}
                   className="p-2 rounded-md hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
                 >
                   <X className="w-5 h-5" />
@@ -519,12 +846,202 @@ export default function FileManagerPage() {
               </div>
             </div>
 
+            {/* Markdown toolbar (only in edit mode) */}
+            {editMode && (
+              <div className="flex items-center gap-1 px-6 py-2 border-b border-border/50 bg-muted/30 flex-wrap">
+                {/* Bold */}
+                <button
+                  onClick={() => insertMarkdown('**', '**', 'bold')}
+                  className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                  title="Bold (Ctrl+B)"
+                  aria-label="Bold"
+                  tabIndex={0}
+                >
+                  <Bold className="w-4 h-4" />
+                </button>
+                {/* Italic */}
+                <button
+                  onClick={() => insertMarkdown('*', '*', 'italic')}
+                  className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                  title="Italic (Ctrl+I)"
+                  aria-label="Italic"
+                  tabIndex={0}
+                >
+                  <Italic className="w-4 h-4" />
+                </button>
+                <div className="w-px h-5 bg-border/60 mx-1" />
+                {/* H1 */}
+                <button
+                  onClick={() => insertLinePrefix('# ')}
+                  className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                  title="Heading 1"
+                  aria-label="Heading 1"
+                  tabIndex={0}
+                >
+                  <Heading1 className="w-4 h-4" />
+                </button>
+                {/* H2 */}
+                <button
+                  onClick={() => insertLinePrefix('## ')}
+                  className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                  title="Heading 2"
+                  aria-label="Heading 2"
+                  tabIndex={0}
+                >
+                  <Heading2 className="w-4 h-4" />
+                </button>
+                {/* H3 */}
+                <button
+                  onClick={() => insertLinePrefix('### ')}
+                  className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                  title="Heading 3"
+                  aria-label="Heading 3"
+                  tabIndex={0}
+                >
+                  <Heading3 className="w-4 h-4" />
+                </button>
+                <div className="w-px h-5 bg-border/60 mx-1" />
+                {/* Unordered List */}
+                <button
+                  onClick={() => insertLinePrefix('- ')}
+                  className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                  title="Bullet list"
+                  aria-label="Bullet list"
+                  tabIndex={0}
+                >
+                  <List className="w-4 h-4" />
+                </button>
+                {/* Ordered List */}
+                <button
+                  onClick={() => insertLinePrefix('1. ')}
+                  className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                  title="Numbered list"
+                  aria-label="Numbered list"
+                  tabIndex={0}
+                >
+                  <ListOrdered className="w-4 h-4" />
+                </button>
+                {/* Checklist */}
+                <button
+                  onClick={() => insertLinePrefix('- [ ] ')}
+                  className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                  title="Checklist"
+                  aria-label="Checklist"
+                  tabIndex={0}
+                >
+                  <CheckSquare className="w-4 h-4" />
+                </button>
+                <div className="w-px h-5 bg-border/60 mx-1" />
+                {/* Blockquote */}
+                <button
+                  onClick={() => insertLinePrefix('> ')}
+                  className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                  title="Blockquote"
+                  aria-label="Blockquote"
+                  tabIndex={0}
+                >
+                  <Quote className="w-4 h-4" />
+                </button>
+                {/* Inline code */}
+                <button
+                  onClick={() => insertMarkdown('`', '`', 'code')}
+                  className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                  title="Inline code"
+                  aria-label="Inline code"
+                  tabIndex={0}
+                >
+                  <Code className="w-4 h-4" />
+                </button>
+                {/* Code block */}
+                <button
+                  onClick={() => insertMarkdown('\n```\n', '\n```\n', 'code block')}
+                  className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                  title="Code block"
+                  aria-label="Code block"
+                  tabIndex={0}
+                >
+                  <FileCode className="w-4 h-4" />
+                </button>
+                <div className="w-px h-5 bg-border/60 mx-1" />
+                {/* Link */}
+                <button
+                  onClick={() => insertMarkdown('[', '](url)', 'link text')}
+                  className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                  title="Link"
+                  aria-label="Link"
+                  tabIndex={0}
+                >
+                  <Link2 className="w-4 h-4" />
+                </button>
+                {/* Horizontal rule */}
+                <button
+                  onClick={() => insertMarkdown('\n---\n', '', '')}
+                  className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                  title="Horizontal rule"
+                  aria-label="Horizontal rule"
+                  tabIndex={0}
+                >
+                  <Minus className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {/* Save error banner */}
+            {saveError && (
+              <div className="px-6 py-2 bg-destructive/10 border-b border-destructive/30 text-destructive text-xs font-medium">
+                {saveError}
+              </div>
+            )}
+
             {/* Content */}
             <div className="flex-1 overflow-auto p-6">
               {previewLoading ? (
                 <div className="flex items-center justify-center h-full">
                   <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" />
                 </div>
+              ) : editMode ? (
+                <textarea
+                  ref={editorRef}
+                  value={editContent}
+                  onChange={(e) => {
+                    setEditContent(e.target.value);
+                    setEditDirty(true);
+                  }}
+                  onKeyDown={(e) => {
+                    // Ctrl+B → bold
+                    if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+                      e.preventDefault();
+                      insertMarkdown('**', '**', 'bold');
+                    }
+                    // Ctrl+I → italic
+                    if ((e.ctrlKey || e.metaKey) && e.key === 'i') {
+                      e.preventDefault();
+                      insertMarkdown('*', '*', 'italic');
+                    }
+                    // Ctrl+S → save
+                    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+                      e.preventDefault();
+                      void saveFile();
+                    }
+                    // Tab → insert 2 spaces
+                    if (e.key === 'Tab') {
+                      e.preventDefault();
+                      const start = e.currentTarget.selectionStart;
+                      const end = e.currentTarget.selectionEnd;
+                      const newVal = editContent.substring(0, start) + '  ' + editContent.substring(end);
+                      setEditContent(newVal);
+                      setEditDirty(true);
+                      requestAnimationFrame(() => {
+                        if (editorRef.current) {
+                          editorRef.current.selectionStart = editorRef.current.selectionEnd = start + 2;
+                        }
+                      });
+                    }
+                  }}
+                  className="w-full h-full min-h-[60vh] resize-none rounded-lg border border-border/60 bg-background px-4 py-3 font-mono text-sm text-foreground leading-relaxed placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 scrollbar-thin"
+                  placeholder="Start typing…"
+                  spellCheck={false}
+                />
               ) : preview.type === 'markdown' ? (
                 <div className="prose prose-sm dark:prose-invert max-w-none">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
@@ -538,16 +1055,8 @@ export default function FileManagerPage() {
                   </code>
                 </pre>
               ) : preview.type === 'pdf' ? (
-                <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-                  <FileText className="w-16 h-16 mb-4" />
-                  <p className="text-lg mb-4">PDF preview not yet supported</p>
-                  <button
-                    onClick={() => downloadFile(preview.file, preview.content)}
-                    className="flex items-center gap-2 px-6 py-3 rounded-lg bg-gradient-to-r from-primary to-accent text-primary-foreground hover:opacity-90 transition-all shadow-lg shadow-primary/30 hover:shadow-xl hover:shadow-primary/40 font-medium"
-                  >
-                    <Download className="w-4 h-4" />
-                    Download to view
-                  </button>
+                <div className="h-full min-h-[600px]">
+                  <PDFViewer pdfData={preview.content} fileName={preview.file.name} />
                 </div>
               ) : preview.type === 'image' ? (
                 brokenImage ? (

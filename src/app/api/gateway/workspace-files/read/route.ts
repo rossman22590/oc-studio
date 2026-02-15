@@ -73,7 +73,20 @@ export async function GET(request: NextRequest) {
       throw new Error(`Daytona API error: ${response.status} ${errorText}`);
     }
 
-    const content = await response.text();
+    // Check if this is a binary file (PDF, image, etc.)
+    const isBinary = filePath.toLowerCase().endsWith('.pdf') || 
+                     filePath.toLowerCase().match(/\.(png|jpg|jpeg|gif|svg|webp|ico|bmp)$/i);
+    
+    let content: string;
+    if (isBinary) {
+      // Read as ArrayBuffer and convert to base64
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      content = buffer.toString('base64');
+    } else {
+      // Read as text for text files
+      content = await response.text();
+    }
 
     return NextResponse.json({ content, exists: true });
   } catch (error: any) {
