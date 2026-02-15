@@ -69,6 +69,11 @@ export const metadata: Metadata = {
     canonical: "/",
   },
   category: "technology",
+  icons: {
+    icon: "/logo.png",
+    apple: "/logo.png",
+    shortcut: "/logo.png",
+  },
 };
 
 const display = Bebas_Neue({
