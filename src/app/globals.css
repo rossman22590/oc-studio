@@ -6,7 +6,7 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  /* ─── OpenClaw Studio – Light Mode (Pink Accents) ─── */
+  /* ─── MachineClaw Studio – Light Mode (Pink Accents) ─── */
   --background: oklch(0.97 0.004 335);
   --foreground: oklch(0.15 0.010 335);
   --card: oklch(0.99 0.002 335);
@@ -54,6 +54,10 @@
   --tracking-normal: 0.005em;
   --panel: oklch(0.99 0.002 335);
   --panel-border: oklch(0.88 0.012 335 / 0.65);
+  --surface-0: var(--background);
+  --surface-1: var(--card);
+  --surface-2: var(--muted);
+  --surface-3: var(--input);
 }
 
 /* ─── Dark Mode ─── */
@@ -94,6 +98,10 @@
   --panel-border: oklch(0.22 0.020 335 / 0.70);
   --shadow-color: oklch(0.02 0.008 335);
   --shadow-opacity: 0.75;
+  --surface-0: var(--background);
+  --surface-1: var(--card);
+  --surface-2: var(--muted);
+  --surface-3: var(--input);
 }
 
 @theme inline {
@@ -130,6 +138,10 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-shadow-color: var(--shadow-color);
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -157,6 +169,10 @@
 }
 
 @layer base {
+  html {
+    font-size: 110%;
+  }
+
   * {
     @apply border-border outline-ring/50;
     box-sizing: border-box;
@@ -192,6 +208,17 @@
     background-image: none;
     opacity: 0;
     pointer-events: none;
+  }
+
+  .dark body::before {
+    inset: 0;
+    transform: none;
+    background: var(--background);
+  }
+
+  .dark body::after {
+    background-image: none;
+    opacity: 0;
   }
 }
 
@@ -412,6 +439,12 @@ textarea:focus::-webkit-scrollbar {
 
 .typing-dots > span:nth-child(3) {
   animation-delay: 320ms;
+}
+
+:where(button, input, textarea, select, [role="button"], summary):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  box-shadow: none !important;
 }
 
 @keyframes fadeUp {

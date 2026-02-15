@@ -1,4 +1,4 @@
-import { AGENT_FILE_NAMES, type AgentFileName } from "@/lib/agents/agentFiles";
+import type { AgentFileName } from "@/lib/agents/agentFiles";
 import type { GatewayClient } from "@/lib/gateway/GatewayClient";
 
 type AgentsFilesGetResponse = {
@@ -400,62 +400,66 @@ export type BootstrapAgentBrainFilesResult = {
 export const bootstrapAgentBrainFilesFromTemplate = async (params: {
   client: GatewayClient;
   agentId: string;
-  templateAgentId?: string | null;
-  fileNames?: readonly AgentFileName[];
+  templateAgentId?: string;
 }): Promise<BootstrapAgentBrainFilesResult> => {
-  const targetAgentId = params.agentId.trim();
-  if (!targetAgentId) {
-    throw new Error("Agent id is required to bootstrap brain files.");
-  }
-  const resolvedNames = params.fileNames ?? AGENT_FILE_NAMES;
-  const templateAgentId =
-    params.templateAgentId?.trim() ||
-    (await resolveTemplateAgentId({ client: params.client, targetAgentId }));
-  if (templateAgentId === targetAgentId) {
-    throw new Error("Template agent cannot be the same as the target agent.");
-  }
+  const agentId = resolveAgentId(params.agentId);
+  const templateAgentId = params.templateAgentId
+    ? resolveAgentId(params.templateAgentId)
+    : await resolveTemplateAgentId({ client: params.client, targetAgentId: agentId });
 
-  const reads = await Promise.all(
-    resolvedNames.map(async (name) => {
-      const [target, template] = await Promise.all([
-        readGatewayAgentFile({ client: params.client, agentId: targetAgentId, name }),
-        readGatewayAgentFile({ client: params.client, agentId: templateAgentId, name }),
-      ]);
-      return { name, target, template };
-    })
-  );
-
-  const toUpdate: Array<{ name: AgentFileName; content: string }> = [];
+  const updated: AgentFileName[] = [];
   const skipped: AgentFileName[] = [];
 
-  for (const entry of reads) {
-    const targetBlank = !entry.target.exists || entry.target.content.trim().length === 0;
-    const templateBlank = !entry.template.exists || entry.template.content.trim().length === 0;
-    if (!targetBlank) {
-      skipped.push(entry.name);
-      continue;
+  // Import AGENT_FILE_NAMES to check which files to bootstrap
+  const { AGENT_FILE_NAMES } = await import("@/lib/agents/agentFiles");
+  
+  for (const fileName of AGENT_FILE_NAMES) {
+    try {
+      const target = await readGatewayAgentFile({
+        client: params.client,
+        agentId,
+        name: fileName,
+      });
+      if (target.exists && target.content.trim()) {
+        skipped.push(fileName);
+        continue;
+      }
+      const source = await readGatewayAgentFile({
+        client: params.client,
+        agentId: templateAgentId,
+        name: fileName,
+      });
+      if (source.exists && source.content.trim()) {
+        await writeGatewayAgentFile({
+          client: params.client,
+          agentId,
+          name: fileName,
+          content: source.content,
+        });
+        updated.push(fileName);
+      }
+    } catch {
+      skipped.push(fileName);
     }
-    if (templateBlank) {
-      skipped.push(entry.name);
-      continue;
-    }
-    toUpdate.push({ name: entry.name, content: entry.template.content });
   }
 
-  await Promise.all(
-    toUpdate.map(async (entry) => {
-      await writeGatewayAgentFile({
-        client: params.client,
-        agentId: targetAgentId,
-        name: entry.name,
-        content: entry.content,
-      });
-    })
-  );
+  return { templateAgentId, updated, skipped };
+};
 
-  return {
-    templateAgentId,
-    updated: toUpdate.map((entry) => entry.name),
-    skipped,
-  };
+export const writeGatewayAgentFiles = async (params: {
+  client: GatewayClient;
+  agentId: string;
+  files: Partial<Record<AgentFileName, string>>;
+}): Promise<void> => {
+  const agentId = resolveAgentId(params.agentId);
+  const entries = Object.entries(params.files).filter(
+    (entry): entry is [AgentFileName, string] => typeof entry[1] === "string"
+  );
+  for (const [name, content] of entries) {
+    await params.client.call("agents.files.set", {
+      agentId,
+      name,
+      content,
+    });
+  }
 };

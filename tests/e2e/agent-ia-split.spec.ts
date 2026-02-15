@@ -7,7 +7,7 @@ test.beforeEach(async ({ page }) => {
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          settings: { version: 1, gateway: null, focused: {}, sessions: {} },
+          settings: { version: 1, gateway: null, focused: {}, avatars: {} },
         }),
       });
       return;
@@ -20,7 +20,7 @@ test.beforeEach(async ({ page }) => {
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        settings: { version: 1, gateway: null, focused: {}, sessions: {} },
+        settings: { version: 1, gateway: null, focused: {}, avatars: {} },
       }),
     });
   });

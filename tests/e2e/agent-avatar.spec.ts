@@ -7,7 +7,7 @@ test.beforeEach(async ({ page }) => {
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          settings: { version: 1, gateway: null, focused: {}, sessions: {} },
+          settings: { version: 1, gateway: null, focused: {}, avatars: {} },
         }),
       });
       return;
@@ -20,7 +20,7 @@ test.beforeEach(async ({ page }) => {
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        settings: { version: 1, gateway: null, focused: {}, sessions: {} },
+        settings: { version: 1, gateway: null, focused: {}, avatars: {} },
       }),
     });
   });
@@ -29,6 +29,6 @@ test.beforeEach(async ({ page }) => {
 test("empty focused view shows zero agents when disconnected", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByText("Agents (0)").first()).toBeVisible();
-  await expect(page.locator("[data-agent-panel]")).toHaveCount(0);
+  await expect(page.getByTestId("studio-menu-toggle")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Connect" }).first()).toBeVisible();
 });

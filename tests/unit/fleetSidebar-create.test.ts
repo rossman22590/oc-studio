@@ -16,6 +16,7 @@ const createAgent = (): AgentState => ({
   lastResult: null,
   lastDiff: null,
   runId: null,
+  runStartedAt: null,
   streamText: null,
   thinkingTrace: null,
   latestOverride: null,
@@ -27,6 +28,9 @@ const createAgent = (): AgentState => ({
   draft: "",
   sessionSettingsSynced: true,
   historyLoadedAt: null,
+  historyFetchLimit: null,
+  historyFetchedCount: null,
+  historyMaybeTruncated: false,
   toolCallingEnabled: true,
   showThinkingTraces: true,
   model: "openai/gpt-5",
@@ -87,5 +91,20 @@ describe("FleetSidebar new agent action", () => {
     );
 
     expect(screen.getByTestId("fleet-new-agent-button")).toBeDisabled();
+  });
+
+  it("shows needs approval badge for awaiting agents", () => {
+    render(
+      createElement(FleetSidebar, {
+        agents: [{ ...createAgent(), awaitingUserInput: true }],
+        selectedAgentId: "agent-1",
+        filter: "all",
+        onFilterChange: vi.fn(),
+        onSelectAgent: vi.fn(),
+        onCreateAgent: vi.fn(),
+      })
+    );
+
+    expect(screen.getByText("Needs approval")).toBeInTheDocument();
   });
 });

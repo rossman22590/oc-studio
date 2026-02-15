@@ -13,12 +13,17 @@ import {
 import type { AgentState as AgentRecord } from "@/features/agents/state/store";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Cog, Shuffle } from "lucide-react";
+import { ChevronRight, Clock, Cog, Copy, Shuffle } from "lucide-react";
 import type { GatewayModelChoice } from "@/lib/gateway/models";
-import { isToolMarkdown, isTraceMarkdown } from "@/lib/text/message-extract";
+import { isTraceMarkdown } from "@/lib/text/message-extract";
+import { rewriteMediaLinesToMarkdown } from "@/lib/text/media-markdown";
 import { isNearBottom } from "@/lib/dom";
 import { AgentAvatar } from "./AgentAvatar";
 import { VoiceDictationButton } from "@/components/VoiceDictationButton";
+import type {
+  ExecApprovalDecision,
+  PendingExecApproval,
+} from "@/features/agents/approvals/types";
 import {
   buildFinalAgentChatItems,
   normalizeAssistantDisplayText,
@@ -67,12 +72,90 @@ const renderMessageWithImages = (text: string) => {
   );
 };
 
+const SPINE_LEFT = "left-[15px]";
+const ASSISTANT_GUTTER_CLASS = "pl-[44px]";
+const ASSISTANT_MAX_WIDTH_DEFAULT_CLASS = "max-w-[68ch]";
+const ASSISTANT_MAX_WIDTH_EXPANDED_CLASS = "max-w-[1120px]";
+const CHAT_TOP_THRESHOLD_PX = 8;
+
+const looksLikePath = (value: string): boolean => {
+  if (!value) return false;
+  if (/(^|[\s(])(?:[A-Za-z]:\\|~\/|\/)/.test(value)) return true;
+  if (/(^|[\s(])(src|app|packages|components)\//.test(value)) return true;
+  if (/(^|[\s(])[\w.-]+\.(ts|tsx|js|jsx|json|md|py|go|rs|java|kt|rb|sh|yaml|yml)\b/.test(value)) {
+    return true;
+  }
+  return false;
+};
+
+const isStructuredMarkdown = (text: string): boolean => {
+  if (!text) return false;
+  if (/```/.test(text)) return true;
+  if (/^\s*#{1,6}\s+/m.test(text)) return true;
+  if (/^\s*[-*+]\s+/m.test(text)) return true;
+  if (/^\s*\d+\.\s+/m.test(text)) return true;
+  if (/^\s*\|.+\|\s*$/m.test(text)) return true;
+  if (looksLikePath(text) && text.split("\n").filter(Boolean).length >= 3) return true;
+  return false;
+};
+
+const resolveAssistantMaxWidthClass = (text: string | null | undefined): string => {
+  const value = (text ?? "").trim();
+  if (!value) return ASSISTANT_MAX_WIDTH_DEFAULT_CLASS;
+  if (isStructuredMarkdown(value)) return ASSISTANT_MAX_WIDTH_EXPANDED_CLASS;
+  const nonEmptyLines = value.split("\n").filter((line) => line.trim().length > 0);
+  const shortLineCount = nonEmptyLines.filter((line) => line.trim().length <= 44).length;
+  if (nonEmptyLines.length >= 10 && shortLineCount / Math.max(1, nonEmptyLines.length) >= 0.65) {
+    return ASSISTANT_MAX_WIDTH_EXPANDED_CLASS;
+  }
+  return ASSISTANT_MAX_WIDTH_DEFAULT_CLASS;
+};
+
+const splitArtifactContent = (
+  rawText: string
+): { intro: string | null; artifact: string | null; artifactOnly: boolean } => {
+  const text = rawText.trim();
+  if (!text) return { intro: null, artifact: null, artifactOnly: false };
+  if (!text.includes("\n\n")) {
+    return isStructuredMarkdown(text)
+      ? { intro: null, artifact: text, artifactOnly: true }
+      : { intro: null, artifact: null, artifactOnly: false };
+  }
+  const [maybeIntro, ...restParts] = text.split(/\n\n+/);
+  const rest = restParts.join("\n\n").trim();
+  const intro = (maybeIntro ?? "").trim();
+  const introWordCount = intro ? intro.split(/\s+/).filter(Boolean).length : 0;
+  if (rest && intro && introWordCount <= 60 && isStructuredMarkdown(rest)) {
+    return { intro, artifact: rest, artifactOnly: false };
+  }
+  return isStructuredMarkdown(text)
+    ? { intro: null, artifact: text, artifactOnly: true }
+    : { intro: null, artifact: null, artifactOnly: false };
+};
+
+const formatChatTimestamp = (timestampMs: number): string => {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }).format(new Date(timestampMs));
+};
+
+const formatDurationLabel = (durationMs: number): string => {
+  const seconds = durationMs / 1000;
+  if (!Number.isFinite(seconds) || seconds <= 0) return "0.0s";
+  if (seconds < 10) return `${seconds.toFixed(1)}s`;
+  return `${Math.round(seconds)}s`;
+};
+
 type AgentChatPanelProps = {
   agent: AgentRecord;
   isSelected: boolean;
   canSend: boolean;
   models: GatewayModelChoice[];
   stopBusy: boolean;
+  stopDisabledReason?: string | null;
+  onLoadMoreHistory: () => void;
   onOpenSettings: () => void;
   onModelChange: (value: string | null) => void;
   onThinkingChange: (value: string | null) => void;
@@ -80,7 +163,312 @@ type AgentChatPanelProps = {
   onSend: (message: string) => void;
   onStopRun: () => void;
   onAvatarShuffle: () => void;
+  pendingExecApprovals?: PendingExecApproval[];
+  onResolveExecApproval?: (id: string, decision: ExecApprovalDecision) => void;
 };
+
+const formatApprovalExpiry = (timestampMs: number): string => {
+  if (!Number.isFinite(timestampMs) || timestampMs <= 0) return "Unknown";
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(timestampMs));
+};
+
+const ExecApprovalCard = memo(function ExecApprovalCard({
+  approval,
+  onResolve,
+}: {
+  approval: PendingExecApproval;
+  onResolve?: (id: string, decision: ExecApprovalDecision) => void;
+}) {
+  const disabled = approval.resolving || !onResolve;
+  return (
+    <div
+      className={`w-full ${ASSISTANT_MAX_WIDTH_EXPANDED_CLASS} ${ASSISTANT_GUTTER_CLASS} self-start rounded-[8px] border border-amber-500/35 bg-amber-500/12 px-3 py-2`}
+      data-testid={`exec-approval-card-${approval.id}`}
+    >
+      <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-800">
+        Exec approval required
+      </div>
+      <div className="mt-2 rounded-[8px] border border-border/70 bg-surface-3 px-2 py-1.5">
+        <div className="font-mono text-[10px] font-semibold text-foreground">{approval.command}</div>
+      </div>
+      <div className="mt-2 grid gap-1 text-[11px] text-muted-foreground sm:grid-cols-2">
+        <div>Host: {approval.host ?? "unknown"}</div>
+        <div>Expires: {formatApprovalExpiry(approval.expiresAtMs)}</div>
+        {approval.cwd ? <div className="sm:col-span-2">CWD: {approval.cwd}</div> : null}
+      </div>
+      {approval.error ? (
+        <div className="mt-2 rounded-[8px] border border-destructive/40 bg-destructive/12 px-2 py-1 text-[11px] text-destructive">
+          {approval.error}
+        </div>
+      ) : null}
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button
+          type="button"
+          className="rounded-[8px] border border-border/70 bg-surface-3 px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground transition hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
+          onClick={() => onResolve?.(approval.id, "allow-once")}
+          disabled={disabled}
+          aria-label={`Allow once for exec approval ${approval.id}`}
+        >
+          Allow once
+        </button>
+        <button
+          type="button"
+          className="rounded-[8px] border border-border/70 bg-surface-3 px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground transition hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
+          onClick={() => onResolve?.(approval.id, "allow-always")}
+          disabled={disabled}
+          aria-label={`Always allow for exec approval ${approval.id}`}
+        >
+          Always allow
+        </button>
+        <button
+          type="button"
+          className="rounded-[8px] border border-destructive/35 bg-destructive/12 px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-destructive transition hover:bg-destructive/20 disabled:cursor-not-allowed disabled:opacity-60"
+          onClick={() => onResolve?.(approval.id, "deny")}
+          disabled={disabled}
+          aria-label={`Deny exec approval ${approval.id}`}
+        >
+          Deny
+        </button>
+      </div>
+    </div>
+  );
+});
+
+const ThinkingDetailsRow = memo(function ThinkingDetailsRow({
+  thinkingText,
+  durationMs,
+  showTyping,
+}: {
+  thinkingText: string;
+  durationMs?: number;
+  showTyping?: boolean;
+}) {
+  if (!thinkingText.trim()) return null;
+  return (
+    <details className="group rounded-[8px] border border-border/70 bg-surface-2 px-2 py-1.5 text-[10px] text-muted-foreground/80">
+      <summary className="flex cursor-pointer list-none items-center gap-2 opacity-65 [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="h-3 w-3 shrink-0 transition group-open:rotate-90" />
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em]">
+            Thinking (internal)
+          </span>
+          {typeof durationMs === "number" ? (
+            <span className="inline-flex items-center gap-1 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/80">
+              <Clock className="h-3 w-3" />
+              {formatDurationLabel(durationMs)}
+            </span>
+          ) : null}
+          {showTyping ? (
+            <span className="typing-dots" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </span>
+          ) : null}
+        </span>
+      </summary>
+      <div className="agent-markdown mt-2 min-w-0 pl-5 text-foreground/85">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{thinkingText}</ReactMarkdown>
+      </div>
+    </details>
+  );
+});
+
+const UserMessageCard = memo(function UserMessageCard({
+  text,
+  timestampMs,
+}: {
+  text: string;
+  timestampMs?: number;
+}) {
+  return (
+    <div className="w-full max-w-[70ch] self-end overflow-hidden rounded-[8px] border border-primary/25 bg-primary/12">
+      <div className="flex items-center justify-between gap-3 bg-primary/18 px-3 py-2">
+        <div className="min-w-0 truncate font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground/90">
+          You
+        </div>
+        {typeof timestampMs === "number" ? (
+          <time className="shrink-0 rounded-full bg-surface-3 px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/90">
+            {formatChatTimestamp(timestampMs)}
+          </time>
+        ) : null}
+      </div>
+      <div className="agent-markdown px-3 py-2.5 text-foreground">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+      </div>
+    </div>
+  );
+});
+
+const AssistantMessageCard = memo(function AssistantMessageCard({
+  avatarSeed,
+  avatarUrl,
+  name,
+  timestampMs,
+  thinkingText,
+  thinkingDurationMs,
+  showTypingIndicator,
+  contentText,
+  streaming,
+}: {
+  avatarSeed: string;
+  avatarUrl: string | null;
+  name: string;
+  timestampMs?: number;
+  thinkingText?: string | null;
+  thinkingDurationMs?: number;
+  showTypingIndicator?: boolean;
+  contentText?: string | null;
+  streaming?: boolean;
+}) {
+  const resolvedTimestamp = typeof timestampMs === "number" ? timestampMs : null;
+  const widthClass = resolveAssistantMaxWidthClass(contentText);
+  const { intro, artifact, artifactOnly } =
+    streaming || !contentText ? { intro: null, artifact: null, artifactOnly: false } : splitArtifactContent(contentText);
+  const hasThinking = Boolean(thinkingText?.trim());
+  const hasContent = Boolean(contentText?.trim());
+  const compactStreamingIndicator = Boolean(streaming && !hasThinking && !hasContent);
+
+  return (
+    <div className="w-full self-start">
+      <div className={`relative w-full ${widthClass} ${ASSISTANT_GUTTER_CLASS}`}>
+        <div className="absolute left-[4px] top-[2px]">
+          <AgentAvatar seed={avatarSeed} name={name} avatarUrl={avatarUrl} size={22} />
+        </div>
+        <div className="flex items-center justify-between gap-3 py-0.5">
+          <div className="min-w-0 truncate font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground/90">
+            {name}
+          </div>
+          {resolvedTimestamp !== null ? (
+            <time className="shrink-0 rounded-full bg-surface-3 px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/90">
+              {formatChatTimestamp(resolvedTimestamp)}
+            </time>
+          ) : null}
+        </div>
+
+        {compactStreamingIndicator ? (
+          <div
+            className="mt-2 inline-flex items-center gap-2 rounded-[8px] border border-border/70 bg-surface-3 px-3 py-2 text-[10px] text-muted-foreground/80"
+            role="status"
+            aria-live="polite"
+            data-testid="agent-typing-indicator"
+          >
+            <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em]">
+              {showTypingIndicator ? "Typing" : "Streaming"}
+            </span>
+            <span className="typing-dots" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </span>
+          </div>
+        ) : (
+          <div className="mt-2 space-y-3">
+            {streaming ? (
+              <div
+                className="flex items-center gap-2 text-[10px] text-muted-foreground/80"
+                role="status"
+                aria-live="polite"
+                data-testid="agent-typing-indicator"
+              >
+                <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em]">
+                  {showTypingIndicator ? "Typing" : "Streaming"}
+                </span>
+                <span className="typing-dots" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </span>
+              </div>
+            ) : null}
+
+            {thinkingText ? (
+              <ThinkingDetailsRow
+                thinkingText={thinkingText}
+                durationMs={thinkingDurationMs}
+                showTyping={streaming}
+              />
+            ) : null}
+
+            {contentText ? (
+              streaming ? (
+                (() => {
+                  if (!contentText.includes("MEDIA:")) {
+                    return (
+                      <div className="whitespace-pre-wrap break-words text-foreground">
+                        {contentText}
+                      </div>
+                    );
+                  }
+                  const rewritten = rewriteMediaLinesToMarkdown(contentText);
+                  if (!rewritten.includes("![](")) {
+                    return (
+                      <div className="whitespace-pre-wrap break-words text-foreground">
+                        {contentText}
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="agent-markdown text-foreground">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{rewritten}</ReactMarkdown>
+                    </div>
+                  );
+                })()
+              ) : artifact ? (
+                <>
+                  {!artifactOnly && intro ? (
+                    <div className="agent-markdown text-foreground">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {rewriteMediaLinesToMarkdown(intro)}
+                      </ReactMarkdown>
+                    </div>
+                  ) : null}
+                  <div className="group rounded-[8px] border border-border/70 bg-surface-3 px-3 py-2">
+                    <div className="flex items-center justify-between gap-3 pb-2">
+                      <div className="min-w-0 truncate font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/80">
+                        Output
+                      </div>
+                      <button
+                        type="button"
+                        className="rounded-[8px] bg-surface-1 p-1.5 text-muted-foreground opacity-0 transition hover:bg-surface-2 group-hover:opacity-100"
+                        aria-label="Extract output"
+                        title="Copy output"
+                        onClick={() => {
+                          if (!navigator.clipboard?.writeText) return;
+                          void navigator.clipboard.writeText(artifact).catch((err) => {
+                            console.warn("Failed to copy output to clipboard.", err);
+                          });
+                        }}
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <div className="agent-markdown text-foreground">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {rewriteMediaLinesToMarkdown(artifact)}
+                      </ReactMarkdown>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="agent-markdown text-foreground">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {rewriteMediaLinesToMarkdown(contentText)}
+                  </ReactMarkdown>
+                </div>
+              )
+            ) : null}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
 
 const AgentChatFinalItems = memo(function AgentChatFinalItems({
   agentId,
@@ -88,72 +476,111 @@ const AgentChatFinalItems = memo(function AgentChatFinalItems({
   avatarSeed,
   avatarUrl,
   chatItems,
-  autoExpandThinking,
-  lastThinkingItemIndex,
+  running,
+  runStartedAt,
 }: {
   agentId: string;
   name: string;
   avatarSeed: string;
   avatarUrl: string | null;
   chatItems: AgentChatItem[];
-  autoExpandThinking: boolean;
-  lastThinkingItemIndex: number;
+  running: boolean;
+  runStartedAt: number | null;
 }) {
+  let pendingThinking: AgentChatItem | null = null;
+  const blocks: Array<
+    | { kind: "user"; text: string; timestampMs?: number }
+    | {
+        kind: "assistant";
+        text: string | null;
+        timestampMs?: number;
+        thinkingText?: string;
+        thinkingDurationMs?: number;
+      }
+    | { kind: "tool"; text: string }
+  > = [];
+
+  for (const item of chatItems) {
+    if (item.kind === "thinking") {
+      pendingThinking = item;
+      continue;
+    }
+    if (item.kind === "user") {
+      pendingThinking = null;
+      blocks.push({ kind: "user", text: item.text, timestampMs: item.timestampMs });
+      continue;
+    }
+    if (item.kind === "assistant") {
+      blocks.push({
+        kind: "assistant",
+        text: item.text,
+        timestampMs: item.timestampMs ?? pendingThinking?.timestampMs,
+        thinkingText: pendingThinking?.kind === "thinking" ? pendingThinking.text : undefined,
+        thinkingDurationMs:
+          item.thinkingDurationMs ??
+          (pendingThinking?.kind === "thinking" ? pendingThinking.thinkingDurationMs : undefined),
+      });
+      pendingThinking = null;
+      continue;
+    }
+    blocks.push({ kind: "tool", text: item.text });
+  }
+
+  if (pendingThinking?.kind === "thinking") {
+    blocks.push({
+      kind: "assistant",
+      text: null,
+      timestampMs: pendingThinking.timestampMs,
+      thinkingText: pendingThinking.text,
+      thinkingDurationMs: pendingThinking.thinkingDurationMs,
+    });
+  }
+
   return (
     <>
-      {chatItems.map((item, index) => {
-        if (item.kind === "thinking") {
+      {blocks.map((block, index) => {
+        if (block.kind === "user") {
           return (
-            <details
-              key={`chat-${agentId}-thinking-${index}`}
-              className="rounded-md border border-border/70 bg-muted/55 text-[11px] text-muted-foreground"
-              open={autoExpandThinking && index === lastThinkingItemIndex}
-            >
-              <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.11em] [&::-webkit-details-marker]:hidden">
-                <AgentAvatar seed={avatarSeed} name={name} avatarUrl={avatarUrl} size={22} />
-                <span>Thinking</span>
-              </summary>
-              <div className="agent-markdown px-2 pb-2 text-foreground">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.text}</ReactMarkdown>
-              </div>
-            </details>
-          );
-        }
-        if (item.kind === "user") {
-          return (
-            <div
+            <UserMessageCard
               key={`chat-${agentId}-user-${index}`}
-              className="rounded-md border border-border/70 bg-muted/70 px-3 py-2 text-foreground"
-            >
-              {renderMessageWithImages(`> ${item.text}`)}
-            </div>
+              text={block.text}
+              timestampMs={block.timestampMs}
+            />
           );
         }
-        if (item.kind === "tool") {
-          const { summaryText, body } = summarizeToolLabel(item.text);
+        if (block.kind === "tool") {
+          const { summaryText, body } = summarizeToolLabel(block.text);
           return (
             <details
               key={`chat-${agentId}-tool-${index}`}
-              className="rounded-md border border-border/70 bg-muted/55 px-2 py-1 text-[11px] text-muted-foreground"
+              className={`w-full ${ASSISTANT_MAX_WIDTH_EXPANDED_CLASS} ${ASSISTANT_GUTTER_CLASS} self-start rounded-[8px] border border-border/70 bg-surface-3 px-2 py-1 text-[10px] text-muted-foreground`}
             >
-              <summary className="cursor-pointer select-none font-mono text-[10px] font-semibold uppercase tracking-[0.11em]">
-                {summaryText}
-              </summary>
-              {body ? (
-                <div className="agent-markdown mt-1 text-foreground">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{body}</ReactMarkdown>
-                </div>
-              ) : null}
+                <summary className="cursor-pointer select-none font-mono text-[10px] font-semibold tracking-[0.11em]">
+                  {summaryText}
+                </summary>
+                {body ? (
+                  <div className="agent-markdown agent-tool-markdown mt-1 text-foreground">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {rewriteMediaLinesToMarkdown(body)}
+                    </ReactMarkdown>
+                  </div>
+                ) : null}
             </details>
           );
         }
+        const streaming = running && index === blocks.length - 1 && !block.text;
         return (
-          <div
+          <AssistantMessageCard
             key={`chat-${agentId}-assistant-${index}`}
-            className="agent-markdown rounded-md border border-transparent px-0.5"
-          >
-            {renderMessageWithImages(item.text)}
-          </div>
+            avatarSeed={avatarSeed}
+            avatarUrl={avatarUrl}
+            name={name}
+            timestampMs={block.timestampMs ?? (streaming ? runStartedAt ?? undefined : undefined)}
+            thinkingText={block.thinkingText ?? null}
+            thinkingDurationMs={block.thinkingDurationMs}
+            contentText={block.text}
+            streaming={streaming}
+          />
         );
       })}
     </>
@@ -166,38 +593,50 @@ const AgentChatTranscript = memo(function AgentChatTranscript({
   avatarSeed,
   avatarUrl,
   status,
+  historyMaybeTruncated,
+  historyFetchedCount,
+  historyFetchLimit,
+  onLoadMoreHistory,
   chatItems,
-  autoExpandThinking,
-  lastThinkingItemIndex,
   liveThinkingText,
   liveAssistantText,
   showTypingIndicator,
   outputLineCount,
   liveAssistantCharCount,
   liveThinkingCharCount,
+  runStartedAt,
   scrollToBottomNextOutputRef,
+  pendingExecApprovals,
+  onResolveExecApproval,
 }: {
   agentId: string;
   name: string;
   avatarSeed: string;
   avatarUrl: string | null;
   status: AgentRecord["status"];
+  historyMaybeTruncated: boolean;
+  historyFetchedCount: number | null;
+  historyFetchLimit: number | null;
+  onLoadMoreHistory: () => void;
   chatItems: AgentChatItem[];
-  autoExpandThinking: boolean;
-  lastThinkingItemIndex: number;
   liveThinkingText: string;
   liveAssistantText: string;
   showTypingIndicator: boolean;
   outputLineCount: number;
   liveAssistantCharCount: number;
   liveThinkingCharCount: number;
+  runStartedAt: number | null;
   scrollToBottomNextOutputRef: MutableRefObject<boolean>;
+  pendingExecApprovals: PendingExecApproval[];
+  onResolveExecApproval?: (id: string, decision: ExecApprovalDecision) => void;
 }) {
   const chatRef = useRef<HTMLDivElement | null>(null);
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
   const pinnedRef = useRef(true);
   const [isPinned, setIsPinned] = useState(true);
+  const [isAtTop, setIsAtTop] = useState(false);
+  const [nowMs, setNowMs] = useState<number | null>(null);
 
   const scrollChatToBottom = useCallback(() => {
     if (!chatRef.current) return;
@@ -217,6 +656,8 @@ const AgentChatTranscript = memo(function AgentChatTranscript({
   const updatePinnedFromScroll = useCallback(() => {
     const el = chatRef.current;
     if (!el) return;
+    const nextAtTop = el.scrollTop <= CHAT_TOP_THRESHOLD_PX;
+    setIsAtTop((current) => (current === nextAtTop ? current : nextAtTop));
     setPinned(
       isNearBottom(
         {
@@ -273,12 +714,32 @@ const AgentChatTranscript = memo(function AgentChatTranscript({
     };
   }, []);
 
+  const showLiveAssistantCard = Boolean(liveThinkingText || liveAssistantText || showTypingIndicator);
+  const hasApprovals = pendingExecApprovals.length > 0;
+  const hasTranscriptContent = chatItems.length > 0 || hasApprovals;
+
+  useEffect(() => {
+    if (status !== "running" || typeof runStartedAt !== "number" || !showLiveAssistantCard) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setNowMs(Date.now());
+    }, 0);
+    const intervalId = window.setInterval(() => setNowMs(Date.now()), 250);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      window.clearInterval(intervalId);
+    };
+  }, [runStartedAt, showLiveAssistantCard, status]);
+
   return (
-    <div className="relative flex-1 overflow-hidden rounded-md border border-border/80 bg-card/75">
+    <div className="relative flex-1 overflow-hidden">
       <div
         ref={chatRef}
         data-testid="agent-chat-scroll"
-        className="h-full overflow-auto p-3 sm:p-4"
+        className={`h-full overflow-auto p-4 sm:p-5 ${showJumpToLatest ? "pb-20" : ""}`}
         onScroll={() => updatePinnedFromScroll()}
         onWheel={(event) => {
           event.stopPropagation();
@@ -287,63 +748,59 @@ const AgentChatTranscript = memo(function AgentChatTranscript({
           event.stopPropagation();
         }}
       >
-        <div className="flex flex-col gap-3 text-xs text-foreground">
-          {chatItems.length === 0 ? (
+        <div className="relative flex flex-col gap-4 text-xs text-foreground">
+          <div aria-hidden className={`pointer-events-none absolute ${SPINE_LEFT} top-0 bottom-0 w-px bg-border/20`} />
+          {historyMaybeTruncated && isAtTop ? (
+            <div className="-mx-1 flex items-center justify-between gap-3 rounded-[10px] border border-border/70 bg-surface-2 px-3 py-2">
+              <div className="min-w-0 truncate font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                Showing most recent {typeof historyFetchedCount === "number" ? historyFetchedCount : "?"} messages
+                {typeof historyFetchLimit === "number" ? ` (limit ${historyFetchLimit})` : ""}
+              </div>
+              <button
+                type="button"
+                className="shrink-0 rounded-[8px] border border-border/70 bg-surface-3 px-3 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground transition hover:bg-surface-2"
+                onClick={onLoadMoreHistory}
+              >
+                Load more
+              </button>
+            </div>
+          ) : null}
+          {!hasTranscriptContent ? (
             <EmptyStatePanel title="No messages yet." compact className="p-3 text-xs" />
           ) : (
             <>
+              {pendingExecApprovals.map((approval) => (
+                <ExecApprovalCard
+                  key={approval.id}
+                  approval={approval}
+                  onResolve={onResolveExecApproval}
+                />
+              ))}
               <AgentChatFinalItems
                 agentId={agentId}
                 name={name}
                 avatarSeed={avatarSeed}
                 avatarUrl={avatarUrl}
                 chatItems={chatItems}
-                autoExpandThinking={autoExpandThinking}
-                lastThinkingItemIndex={lastThinkingItemIndex}
+                running={status === "running"}
+                runStartedAt={runStartedAt}
               />
-              {liveThinkingText ? (
-                <details
-                  className="rounded-md border border-border/70 bg-muted/55 text-[11px] text-muted-foreground"
-                  open={status === "running" && autoExpandThinking}
-                >
-                  <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.11em] [&::-webkit-details-marker]:hidden">
-                    <AgentAvatar seed={avatarSeed} name={name} avatarUrl={avatarUrl} size={22} />
-                    <span>Thinking</span>
-                    {status === "running" ? (
-                      <span className="typing-dots" aria-hidden="true">
-                        <span />
-                        <span />
-                        <span />
-                      </span>
-                    ) : null}
-                  </summary>
-                  <div className="px-2 pb-2 text-foreground">
-                    <div className="whitespace-pre-wrap break-words">{liveThinkingText}</div>
-                  </div>
-                </details>
-              ) : null}
-              {liveAssistantText ? (
-                <div className="agent-markdown rounded-md border border-transparent px-0.5 opacity-85">
-                  {liveAssistantText}
-                </div>
-              ) : null}
-              {showTypingIndicator ? (
-                <div
-                  className="flex items-center gap-2 rounded-md border border-border/70 bg-muted/55 px-2 py-1.5 text-[11px] text-muted-foreground"
-                  role="status"
-                  aria-live="polite"
-                  data-testid="agent-typing-indicator"
-                >
-                  <AgentAvatar seed={avatarSeed} name={name} avatarUrl={avatarUrl} size={22} />
-                  <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.11em]">
-                    Thinking
-                  </span>
-                  <span className="typing-dots" aria-hidden="true">
-                    <span />
-                    <span />
-                    <span />
-                  </span>
-                </div>
+              {liveThinkingText || liveAssistantText || showTypingIndicator ? (
+                <AssistantMessageCard
+                  avatarSeed={avatarSeed}
+                  avatarUrl={avatarUrl}
+                  name={name}
+                  timestampMs={runStartedAt ?? undefined}
+                  thinkingText={liveThinkingText || null}
+                  thinkingDurationMs={
+                    typeof runStartedAt === "number" && typeof nowMs === "number"
+                      ? Math.max(0, nowMs - runStartedAt)
+                      : undefined
+                  }
+                  showTypingIndicator={showTypingIndicator}
+                  contentText={liveAssistantText || null}
+                  streaming={status === "running"}
+                />
               ) : null}
               <div ref={chatBottomRef} />
             </>
@@ -354,7 +811,7 @@ const AgentChatTranscript = memo(function AgentChatTranscript({
       {showJumpToLatest ? (
         <button
           type="button"
-          className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-md border border-border/80 bg-card/95 px-3 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground shadow-sm transition hover:bg-muted/70"
+          className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-[8px] border border-border/70 bg-surface-2 px-3 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground transition hover:bg-surface-3"
           onClick={() => {
             setPinned(true);
             scrollChatToBottom();
@@ -376,6 +833,7 @@ const AgentChatComposer = memo(function AgentChatComposer({
   onStop,
   canSend,
   stopBusy,
+  stopDisabledReason,
   running,
   sendDisabled,
   inputRef,
@@ -394,6 +852,7 @@ const AgentChatComposer = memo(function AgentChatComposer({
   onStop: () => void;
   canSend: boolean;
   stopBusy: boolean;
+  stopDisabledReason?: string | null;
   running: boolean;
   sendDisabled: boolean;
   inputRef: (el: HTMLTextAreaElement | HTMLInputElement | null) => void;
@@ -405,6 +864,9 @@ const AgentChatComposer = memo(function AgentChatComposer({
   fileInputRef?: React.RefObject<HTMLInputElement>;
   onVoiceTranscript?: (text: string) => void;
 }) {
+  const stopReason = stopDisabledReason?.trim() ?? "";
+  const stopDisabled = !canSend || stopBusy || Boolean(stopReason);
+  const stopAriaLabel = stopReason ? `Stop unavailable: ${stopReason}` : "Stop";
   return (
     <div className="flex flex-col gap-2">
       {attachedPDFs && attachedPDFs.length > 0 && (
@@ -508,6 +970,8 @@ export const AgentChatPanel = ({
   canSend,
   models,
   stopBusy,
+  stopDisabledReason = null,
+  onLoadMoreHistory,
   onOpenSettings,
   onModelChange,
   onThinkingChange,
@@ -515,6 +979,8 @@ export const AgentChatPanel = ({
   onSend,
   onStopRun,
   onAvatarShuffle,
+  pendingExecApprovals = [],
+  onResolveExecApproval,
 }: AgentChatPanelProps) => {
   const [draftValue, setDraftValue] = useState(agent.draft);
   const [attachedImages, setAttachedImages] = useState<string[]>([]);
@@ -570,7 +1036,7 @@ export const AgentChatPanel = ({
         pendingResizeFrameRef.current = null;
       }
     };
-  }, [resizeDraft, agent.draft]);
+  }, [resizeDraft, draftValue]);
 
   const handleSend = useCallback(
     (message: string) => {
@@ -709,34 +1175,6 @@ export const AgentChatPanel = ({
     }
     return false;
   }, [agent.outputLines, agent.showThinkingTraces, latestUserOutputIndex]);
-  const hasSavedAssistantSinceLatestUser = useMemo(() => {
-    if (latestUserOutputIndex < 0) return false;
-    for (
-      let index = latestUserOutputIndex + 1;
-      index < agent.outputLines.length;
-      index += 1
-    ) {
-      const line = agent.outputLines[index]?.trim() ?? "";
-      if (!line) continue;
-      if (line.startsWith(">")) continue;
-      if (isTraceMarkdown(line)) continue;
-      if (isToolMarkdown(line)) continue;
-      return true;
-    }
-    return false;
-  }, [agent.outputLines, latestUserOutputIndex]);
-  const lastThinkingItemIndex = useMemo(() => {
-    for (let index = chatItems.length - 1; index >= 0; index -= 1) {
-      if (chatItems[index]?.kind === "thinking") {
-        return index;
-      }
-    }
-    return -1;
-  }, [chatItems]);
-  const autoExpandThinking =
-    agent.status === "running" &&
-    !hasSavedAssistantSinceLatestUser &&
-    (lastThinkingItemIndex >= 0 || hasVisibleLiveThinking);
   const showTypingIndicator =
     agent.status === "running" &&
     !hasLiveAssistantText &&
@@ -745,14 +1183,15 @@ export const AgentChatPanel = ({
 
   const modelOptions = useMemo(
     () =>
-      models.map((entry) => ({
-        value: `${entry.provider}/${entry.id}`,
-        label:
-          entry.name === `${entry.provider}/${entry.id}`
-            ? entry.name
-            : `${entry.name} (${entry.provider}/${entry.id})`,
-        reasoning: entry.reasoning,
-      })),
+      models.map((entry) => {
+        const key = `${entry.provider}/${entry.id}`;
+        const alias = typeof entry.name === "string" ? entry.name.trim() : "";
+        return {
+          value: key,
+          label: !alias || alias === key ? key : alias,
+          reasoning: entry.reasoning,
+        };
+      }),
     [models]
   );
   const modelValue = agent.model ?? "";
@@ -773,15 +1212,8 @@ export const AgentChatPanel = ({
       plainDraftRef.current = value;
       setDraftValue(value);
       onDraftChange(value);
-      if (pendingResizeFrameRef.current !== null) {
-        cancelAnimationFrame(pendingResizeFrameRef.current);
-      }
-      pendingResizeFrameRef.current = requestAnimationFrame(() => {
-        pendingResizeFrameRef.current = null;
-        resizeDraft();
-      });
     },
-    [onDraftChange, resizeDraft]
+    [onDraftChange]
   );
 
   const handleComposerKeyDown = useCallback(
@@ -829,7 +1261,7 @@ export const AgentChatPanel = ({
                 isSelected={isSelected}
               />
               <button
-                className="nodrag pointer-events-none absolute bottom-1 right-1 flex h-7 w-7 items-center justify-center rounded-full border border-border/80 bg-card/90 text-muted-foreground opacity-0 shadow-sm transition group-focus-within/avatar:pointer-events-auto group-focus-within/avatar:opacity-100 group-hover/avatar:pointer-events-auto group-hover/avatar:opacity-100 hover:border-border hover:bg-muted/65"
+                className="nodrag pointer-events-none absolute bottom-1 right-1 flex h-7 w-7 items-center justify-center rounded-full border border-border/80 bg-surface-3 text-muted-foreground opacity-0 transition group-focus-within/avatar:pointer-events-auto group-focus-within/avatar:opacity-100 group-hover/avatar:pointer-events-auto group-hover/avatar:opacity-100 hover:border-border hover:bg-surface-2"
                 type="button"
                 aria-label="Shuffle avatar"
                 data-testid="agent-avatar-shuffle"
@@ -862,7 +1294,7 @@ export const AgentChatPanel = ({
                 <label className="flex min-w-0 flex-col gap-1 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                   <span>Model</span>
                   <select
-                    className="h-8 w-full min-w-0 overflow-hidden text-ellipsis whitespace-nowrap rounded-md border border-border bg-card/75 px-2 text-[11px] font-semibold text-foreground"
+                    className="h-8 w-full min-w-0 overflow-hidden text-ellipsis whitespace-nowrap rounded-md border border-border bg-surface-3 px-2 text-[11px] font-semibold text-foreground"
                     aria-label="Model"
                     value={modelValue}
                     onChange={(event) => {
@@ -884,7 +1316,7 @@ export const AgentChatPanel = ({
                   <label className="flex flex-col gap-1 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                     <span>Thinking</span>
                     <select
-                      className="h-8 rounded-md border border-border bg-card/75 px-2 text-[11px] font-semibold text-foreground"
+                      className="h-8 rounded-md border border-border bg-surface-3 px-2 text-[11px] font-semibold text-foreground"
                       aria-label="Thinking"
                       value={agent.thinkingLevel ?? ""}
                       onChange={(event) => {
@@ -909,7 +1341,7 @@ export const AgentChatPanel = ({
           </div>
 
           <button
-            className="nodrag mt-0.5 flex h-9 w-9 items-center justify-center rounded-md border border-border/80 bg-card/60 text-muted-foreground transition hover:border-border hover:bg-muted/65"
+            className="nodrag mt-0.5 flex h-9 w-9 items-center justify-center rounded-md border border-border/80 bg-surface-3 text-muted-foreground transition hover:border-border hover:bg-surface-2"
             type="button"
             data-testid="agent-settings-toggle"
             aria-label="Open agent settings"
@@ -921,23 +1353,28 @@ export const AgentChatPanel = ({
         </div>
       </div>
 
-      <div className="mt-3 flex min-h-0 flex-1 flex-col gap-3 px-3 pb-3 sm:px-4 sm:pb-4">
-        <AgentChatTranscript
-          agentId={agent.agentId}
-          name={agent.name}
-          avatarSeed={avatarSeed}
-          avatarUrl={agent.avatarUrl ?? null}
-          status={agent.status}
-          chatItems={chatItems}
-          autoExpandThinking={autoExpandThinking}
-          lastThinkingItemIndex={lastThinkingItemIndex}
-          liveThinkingText={liveThinkingText}
-          liveAssistantText={liveAssistantText}
-          showTypingIndicator={showTypingIndicator}
-          outputLineCount={agent.outputLines.length}
+      <div className="mt-3 flex min-h-0 flex-1 flex-col px-3 pb-3 sm:px-4 sm:pb-4">
+	        <AgentChatTranscript
+	          agentId={agent.agentId}
+	          name={agent.name}
+	          avatarSeed={avatarSeed}
+	          avatarUrl={agent.avatarUrl ?? null}
+	          status={agent.status}
+	          historyMaybeTruncated={agent.historyMaybeTruncated}
+	          historyFetchedCount={agent.historyFetchedCount}
+	          historyFetchLimit={agent.historyFetchLimit}
+	          onLoadMoreHistory={onLoadMoreHistory}
+	          chatItems={chatItems}
+	          liveThinkingText={liveThinkingText}
+	          liveAssistantText={liveAssistantText}
+	          showTypingIndicator={showTypingIndicator}
+	          outputLineCount={agent.outputLines.length}
           liveAssistantCharCount={agent.streamText?.length ?? 0}
           liveThinkingCharCount={agent.thinkingTrace?.length ?? 0}
+          runStartedAt={agent.runStartedAt}
           scrollToBottomNextOutputRef={scrollToBottomNextOutputRef}
+          pendingExecApprovals={pendingExecApprovals}
+          onResolveExecApproval={onResolveExecApproval}
         />
 
         <AgentChatComposer

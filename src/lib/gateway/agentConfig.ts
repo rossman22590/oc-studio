@@ -41,6 +41,7 @@ export type GatewayConfigSnapshot = {
   config?: Record<string, unknown>;
   hash?: string;
   exists?: boolean;
+  path?: string | null;
 };
 
 type HeartbeatBlock = Record<string, unknown> | null | undefined;
@@ -53,6 +54,29 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value && typeof value === "object" && !Array.isArray(value));
 
 export type ConfigAgentEntry = Record<string, unknown> & { id: string };
+
+export type GatewayAgentSandboxOverrides = {
+  mode?: "off" | "non-main" | "all";
+  workspaceAccess?: "none" | "ro" | "rw";
+};
+
+export type GatewayAgentToolsOverrides = {
+  profile?: "minimal" | "coding" | "messaging" | "full";
+  allow?: string[];
+  alsoAllow?: string[];
+  deny?: string[];
+  sandbox?: {
+    tools?: {
+      allow?: string[];
+      deny?: string[];
+    };
+  };
+};
+
+export type GatewayAgentOverrides = {
+  sandbox?: GatewayAgentSandboxOverrides;
+  tools?: GatewayAgentToolsOverrides;
+};
 
 export const readConfigAgentList = (
   config: Record<string, unknown> | undefined
@@ -94,7 +118,7 @@ export const upsertConfigAgentEntry = (
   return { list: nextList, entry: updatedEntry };
 };
 
-const slugifyName = (name: string): string => {
+export const slugifyAgentName = (name: string): string => {
   const slug = name
     .trim()
     .toLowerCase()
@@ -269,7 +293,7 @@ export const triggerHeartbeatNow = async (
   });
 };
 
-const shouldRetryConfigPatch = (err: unknown) => {
+const shouldRetryConfigWrite = (err: unknown) => {
   if (!(err instanceof GatewayResponseError)) return false;
   return /re-run config\.get|config changed since last load/i.test(err.message);
 };
@@ -279,7 +303,6 @@ const applyGatewayConfigPatch = async (params: {
   patch: Record<string, unknown>;
   baseHash?: string | null;
   exists?: boolean;
-  sessionKey?: string;
   attempt?: number;
 }): Promise<void> => {
   const attempt = params.attempt ?? 0;
@@ -292,11 +315,10 @@ const applyGatewayConfigPatch = async (params: {
     raw: JSON.stringify(params.patch, null, 2),
   };
   if (baseHash) payload.baseHash = baseHash;
-  if (params.sessionKey) payload.sessionKey = params.sessionKey;
   try {
     await params.client.call("config.patch", payload);
   } catch (err) {
-    if (attempt < 1 && shouldRetryConfigPatch(err)) {
+    if (attempt < 1 && shouldRetryConfigWrite(err)) {
       const snapshot = await params.client.call<GatewayConfigSnapshot>("config.get", {});
       return applyGatewayConfigPatch({
         ...params,
@@ -309,215 +331,275 @@ const applyGatewayConfigPatch = async (params: {
   }
 };
 
-type GatewayConfigMutationResult<T> =
-  | {
-      shouldPatch: true;
-      patch: Record<string, unknown>;
-      result: T;
-    }
-  | {
-      shouldPatch: false;
-      result: T;
-    };
-
-const withGatewayConfigMutation = async <T>(params: {
+const applyGatewayConfigSet = async (params: {
   client: GatewayClient;
-  sessionKey?: string;
-  mutate: (input: {
-    snapshot: GatewayConfigSnapshot;
-    baseConfig: Record<string, unknown>;
-    list: ConfigAgentEntry[];
-  }) => GatewayConfigMutationResult<T>;
-}): Promise<T> => {
-  const snapshot = await params.client.call<GatewayConfigSnapshot>("config.get", {});
-  const baseConfig = isRecord(snapshot.config) ? snapshot.config : {};
-  const list = readConfigAgentList(baseConfig);
-  const mutation = params.mutate({ snapshot, baseConfig, list });
-  if (mutation.shouldPatch) {
-    await applyGatewayConfigPatch({
-      client: params.client,
-      patch: mutation.patch,
-      baseHash: snapshot.hash ?? undefined,
-      exists: snapshot.exists,
-      sessionKey: params.sessionKey,
-    });
+  config: Record<string, unknown>;
+  baseHash?: string | null;
+  exists?: boolean;
+  attempt?: number;
+}): Promise<void> => {
+  const attempt = params.attempt ?? 0;
+  const requiresBaseHash = params.exists !== false;
+  const baseHash = requiresBaseHash ? params.baseHash?.trim() : undefined;
+  if (requiresBaseHash && !baseHash) {
+    throw new Error("Gateway config hash unavailable; re-run config.get.");
   }
-  return mutation.result;
+  const payload: Record<string, unknown> = {
+    raw: JSON.stringify(params.config, null, 2),
+  };
+  if (baseHash) payload.baseHash = baseHash;
+  try {
+    await params.client.call("config.set", payload);
+  } catch (err) {
+    if (attempt < 1 && shouldRetryConfigWrite(err)) {
+      const snapshot = await params.client.call<GatewayConfigSnapshot>("config.get", {});
+      return applyGatewayConfigSet({
+        ...params,
+        baseHash: snapshot.hash ?? undefined,
+        exists: snapshot.exists,
+        attempt: attempt + 1,
+      });
+    }
+    throw err;
+  }
 };
 
 export const renameGatewayAgent = async (params: {
   client: GatewayClient;
   agentId: string;
   name: string;
-  sessionKey?: string;
 }) => {
   const trimmed = params.name.trim();
   if (!trimmed) {
     throw new Error("Agent name is required.");
   }
-  return withGatewayConfigMutation({
-    client: params.client,
-    sessionKey: params.sessionKey,
-    mutate: ({ list }) => {
-      const { list: nextList, entry } = upsertConfigAgentEntry(
-        list,
-        params.agentId,
-        (entry: ConfigAgentEntry) => ({
-          ...entry,
-          name: trimmed,
-        })
-      );
-      return {
-        shouldPatch: true,
-        patch: { agents: { list: nextList } },
-        result: entry,
-      };
-    },
-  });
+  await params.client.call("agents.update", { agentId: params.agentId, name: trimmed });
+  return { id: params.agentId, name: trimmed };
 };
 
-const createUniqueAgentId = (name: string, list: ConfigAgentEntry[]) => {
-  const base = slugifyName(name);
-  const existing = new Set(list.map((entry) => entry.id));
-  if (!existing.has(base)) return base;
-  for (let suffix = 2; suffix < 100000; suffix += 1) {
-    const candidate = `${base}-${suffix}`;
-    if (!existing.has(candidate)) return candidate;
-  }
-  throw new Error("Unable to allocate a unique agent ID.");
+const dirnameLike = (value: string): string => {
+  const lastSlash = value.lastIndexOf("/");
+  const lastBackslash = value.lastIndexOf("\\");
+  const idx = Math.max(lastSlash, lastBackslash);
+  if (idx < 0) return "";
+  return value.slice(0, idx);
+};
+
+const joinPathLike = (dir: string, leaf: string): string => {
+  const sep = dir.includes("\\") ? "\\" : "/";
+  const trimmedDir = dir.endsWith("/") || dir.endsWith("\\") ? dir.slice(0, -1) : dir;
+  return `${trimmedDir}${sep}${leaf}`;
 };
 
 export const createGatewayAgent = async (params: {
   client: GatewayClient;
   name: string;
-  sessionKey?: string;
 }): Promise<ConfigAgentEntry> => {
   const trimmed = params.name.trim();
   if (!trimmed) {
     throw new Error("Agent name is required.");
   }
-  return withGatewayConfigMutation({
-    client: params.client,
-    sessionKey: params.sessionKey,
-    mutate: ({ list }) => {
-      const id = createUniqueAgentId(trimmed, list);
-      const entry: ConfigAgentEntry = { id, name: trimmed };
-      const nextList = [...list, entry];
-      return {
-        shouldPatch: true,
-        patch: { agents: { list: nextList } },
-        result: entry,
-      };
-    },
-  });
+
+  const snapshot = await params.client.call<GatewayConfigSnapshot>("config.get", {});
+  const configPath = typeof snapshot.path === "string" ? snapshot.path.trim() : "";
+  if (!configPath) {
+    throw new Error(
+      'Gateway did not return a config path; cannot compute a default workspace for "agents.create".',
+    );
+  }
+  const stateDir = dirnameLike(configPath);
+  if (!stateDir) {
+    throw new Error(
+      `Gateway config path "${configPath}" is missing a directory; cannot compute workspace.`,
+    );
+  }
+  const idGuess = slugifyAgentName(trimmed);
+  const workspace = joinPathLike(stateDir, `workspace-${idGuess}`);
+
+  const result = (await params.client.call("agents.create", {
+    name: trimmed,
+    workspace,
+  })) as { ok?: boolean; agentId?: string; name?: string; workspace?: string };
+  const agentId = typeof result?.agentId === "string" ? result.agentId.trim() : "";
+  if (!agentId) {
+    throw new Error("Gateway returned an invalid agents.create response (missing agentId).");
+  }
+  return { id: agentId, name: trimmed };
 };
 
 export const deleteGatewayAgent = async (params: {
   client: GatewayClient;
   agentId: string;
-  sessionKey?: string;
 }) => {
-  return withGatewayConfigMutation({
-    client: params.client,
-    sessionKey: params.sessionKey,
-    mutate: ({ baseConfig, list }) => {
-      const nextList = list.filter((entry) => entry.id !== params.agentId);
-      const bindings = Array.isArray(baseConfig.bindings) ? baseConfig.bindings : [];
-      const nextBindings = bindings.filter((binding) => {
-        if (!binding || typeof binding !== "object") return true;
-        const agentId = (binding as Record<string, unknown>).agentId;
-        return agentId !== params.agentId;
-      });
-      const patch: Record<string, unknown> = {};
-      if (nextList.length !== list.length) {
-        patch.agents = { list: nextList };
-      }
-      if (nextBindings.length !== bindings.length) {
-        patch.bindings = nextBindings;
-      }
-      const shouldPatch = Object.keys(patch).length > 0;
-      if (!shouldPatch) {
-        return {
-          shouldPatch: false,
-          result: {
-            removed: false,
-            removedBindings: 0,
-          },
-        };
-      }
-      return {
-        shouldPatch: true,
-        patch,
-        result: {
-          removed: nextList.length !== list.length,
-          removedBindings: bindings.length - nextBindings.length,
-        },
-      };
-    },
-  });
+  try {
+    const result = (await params.client.call("agents.delete", {
+      agentId: params.agentId,
+    })) as { ok?: boolean; removedBindings?: unknown };
+    const removedBindings =
+      typeof result?.removedBindings === "number" && Number.isFinite(result.removedBindings)
+        ? Math.max(0, Math.floor(result.removedBindings))
+        : 0;
+    return { removed: true, removedBindings };
+  } catch (err) {
+    if (err instanceof GatewayResponseError && /not found/i.test(err.message)) {
+      return { removed: false, removedBindings: 0 };
+    }
+    throw err;
+  }
 };
 
 export const updateGatewayHeartbeat = async (params: {
   client: GatewayClient;
   agentId: string;
   payload: AgentHeartbeatUpdatePayload;
-  sessionKey?: string;
 }): Promise<AgentHeartbeatResult> => {
-  return withGatewayConfigMutation({
-    client: params.client,
-    sessionKey: params.sessionKey,
-    mutate: ({ baseConfig, list }) => {
-      const { list: nextList } = upsertConfigAgentEntry(
-        list,
-        params.agentId,
-        (entry: ConfigAgentEntry) => {
-          const next = { ...entry };
-          if (params.payload.override) {
-            next.heartbeat = buildHeartbeatOverride(params.payload.heartbeat);
-          } else if ("heartbeat" in next) {
-            delete next.heartbeat;
-          }
-          return next;
-        }
-      );
-      const nextConfig = writeConfigAgentList(baseConfig, nextList);
-      return {
-        shouldPatch: true,
-        patch: { agents: { list: nextList } },
-        result: resolveHeartbeatSettings(nextConfig, params.agentId),
-      };
-    },
+  const snapshot = await params.client.call<GatewayConfigSnapshot>("config.get", {});
+  const baseConfig = isRecord(snapshot.config) ? snapshot.config : {};
+  const list = readConfigAgentList(baseConfig);
+  const { list: nextList } = upsertConfigAgentEntry(list, params.agentId, (entry) => {
+    const next = { ...entry };
+    if (params.payload.override) {
+      next.heartbeat = buildHeartbeatOverride(params.payload.heartbeat);
+    } else if ("heartbeat" in next) {
+      delete next.heartbeat;
+    }
+    return next;
   });
+  const nextConfig = writeConfigAgentList(baseConfig, nextList);
+  await applyGatewayConfigPatch({
+    client: params.client,
+    patch: { agents: { list: nextList } },
+    baseHash: snapshot.hash ?? undefined,
+    exists: snapshot.exists,
+  });
+  return resolveHeartbeatSettings(nextConfig, params.agentId);
 };
 
 export const removeGatewayHeartbeatOverride = async (params: {
   client: GatewayClient;
   agentId: string;
-  sessionKey?: string;
 }): Promise<AgentHeartbeatResult> => {
-  return withGatewayConfigMutation({
+  const snapshot = await params.client.call<GatewayConfigSnapshot>("config.get", {});
+  const baseConfig = isRecord(snapshot.config) ? snapshot.config : {};
+  const list = readConfigAgentList(baseConfig);
+  const nextList = list.map((entry) => {
+    if (entry.id !== params.agentId) return entry;
+    if (!("heartbeat" in entry)) return entry;
+    const next = { ...entry };
+    delete next.heartbeat;
+    return next;
+  });
+  const changed = nextList.some((entry, index) => entry !== list[index]);
+  if (!changed) {
+    return resolveHeartbeatSettings(baseConfig, params.agentId);
+  }
+  const nextConfig = writeConfigAgentList(baseConfig, nextList);
+  await applyGatewayConfigPatch({
     client: params.client,
-    sessionKey: params.sessionKey,
-    mutate: ({ baseConfig, list }) => {
-      const nextList = list.map((entry) => {
-        if (entry.id !== params.agentId) return entry;
-        if (!("heartbeat" in entry)) return entry;
-        const next = { ...entry };
-        delete next.heartbeat;
-        return next;
-      });
-      const changed = nextList.some((entry, index) => entry !== list[index]);
-      if (!changed) {
-        return {
-          shouldPatch: false,
-          result: resolveHeartbeatSettings(baseConfig, params.agentId),
-        };
+    patch: { agents: { list: nextList } },
+    baseHash: snapshot.hash ?? undefined,
+    exists: snapshot.exists,
+  });
+  return resolveHeartbeatSettings(nextConfig, params.agentId);
+};
+
+const normalizeToolList = (values: string[] | undefined): string[] | undefined => {
+  if (!values) return undefined;
+  const next = values
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  return Array.from(new Set(next));
+};
+
+export const updateGatewayAgentOverrides = async (params: {
+  client: GatewayClient;
+  agentId: string;
+  overrides: GatewayAgentOverrides;
+}): Promise<void> => {
+  const agentId = params.agentId.trim();
+  if (!agentId) {
+    throw new Error("Agent id is required.");
+  }
+  if (params.overrides.tools?.allow !== undefined && params.overrides.tools?.alsoAllow !== undefined) {
+    throw new Error("Agent tools overrides cannot set both allow and alsoAllow.");
+  }
+  const hasSandboxOverrides =
+    Boolean(params.overrides.sandbox?.mode) || Boolean(params.overrides.sandbox?.workspaceAccess);
+  const hasToolsOverrides =
+    Boolean(params.overrides.tools?.profile) ||
+    params.overrides.tools?.allow !== undefined ||
+    params.overrides.tools?.alsoAllow !== undefined ||
+    params.overrides.tools?.deny !== undefined ||
+    params.overrides.tools?.sandbox?.tools?.allow !== undefined ||
+    params.overrides.tools?.sandbox?.tools?.deny !== undefined;
+  if (!hasSandboxOverrides && !hasToolsOverrides) {
+    return;
+  }
+
+  const snapshot = await params.client.call<GatewayConfigSnapshot>("config.get", {});
+  const baseConfig = isRecord(snapshot.config) ? snapshot.config : {};
+  const list = readConfigAgentList(baseConfig);
+  const { list: nextList } = upsertConfigAgentEntry(list, agentId, (entry) => {
+    const next: ConfigAgentEntry = { ...entry, id: agentId };
+
+    if (hasSandboxOverrides) {
+      const currentSandbox = isRecord(next.sandbox) ? { ...next.sandbox } : {};
+      if (params.overrides.sandbox?.mode) {
+        currentSandbox.mode = params.overrides.sandbox.mode;
       }
-      return {
-        shouldPatch: true,
-        patch: { agents: { list: nextList } },
-        result: resolveHeartbeatSettings(writeConfigAgentList(baseConfig, nextList), params.agentId),
-      };
-    },
+      if (params.overrides.sandbox?.workspaceAccess) {
+        currentSandbox.workspaceAccess = params.overrides.sandbox.workspaceAccess;
+      }
+      next.sandbox = currentSandbox;
+    }
+
+    if (hasToolsOverrides) {
+      const currentTools = isRecord(next.tools) ? { ...next.tools } : {};
+      if (params.overrides.tools?.profile) {
+        currentTools.profile = params.overrides.tools.profile;
+      }
+      const allow = normalizeToolList(params.overrides.tools?.allow);
+      if (allow !== undefined) {
+        currentTools.allow = allow;
+        delete currentTools.alsoAllow;
+      }
+      const alsoAllow = normalizeToolList(params.overrides.tools?.alsoAllow);
+      if (alsoAllow !== undefined) {
+        currentTools.alsoAllow = alsoAllow;
+        delete currentTools.allow;
+      }
+      const deny = normalizeToolList(params.overrides.tools?.deny);
+      if (deny !== undefined) {
+        currentTools.deny = deny;
+      }
+
+      const sandboxAllow = normalizeToolList(params.overrides.tools?.sandbox?.tools?.allow);
+      const sandboxDeny = normalizeToolList(params.overrides.tools?.sandbox?.tools?.deny);
+      if (sandboxAllow !== undefined || sandboxDeny !== undefined) {
+        const sandboxRaw = (currentTools as Record<string, unknown>).sandbox;
+        const sandbox = isRecord(sandboxRaw) ? { ...sandboxRaw } : {};
+        const sandboxToolsRaw = (sandbox as Record<string, unknown>).tools;
+        const sandboxTools = isRecord(sandboxToolsRaw) ? { ...sandboxToolsRaw } : {};
+        if (sandboxAllow !== undefined) {
+          (sandboxTools as Record<string, unknown>).allow = sandboxAllow;
+        }
+        if (sandboxDeny !== undefined) {
+          (sandboxTools as Record<string, unknown>).deny = sandboxDeny;
+        }
+        (sandbox as Record<string, unknown>).tools = sandboxTools;
+        (currentTools as Record<string, unknown>).sandbox = sandbox;
+      }
+      next.tools = currentTools;
+    }
+
+    return next;
+  });
+
+  const nextConfig = writeConfigAgentList(baseConfig, nextList);
+  await applyGatewayConfigSet({
+    client: params.client,
+    config: nextConfig,
+    baseHash: snapshot.hash ?? undefined,
+    exists: snapshot.exists,
   });
 };

@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 
-import { resolveGatewaySshTargetFromGatewayUrl } from "@/lib/ssh/gateway-host";
+import { restoreAgentStateLocally, trashAgentStateLocally } from "@/lib/agent-state/local";
+import { isLocalGatewayUrl } from "@/lib/gateway/local-gateway";
+import {
+  resolveConfiguredSshTarget,
+  resolveGatewaySshTargetFromGatewayUrl,
+} from "@/lib/ssh/gateway-host";
 import {
   restoreAgentStateOverSsh,
   trashAgentStateOverSsh,
@@ -22,9 +27,13 @@ type RestoreAgentStateRequest = {
 
 const isSafeAgentId = (value: string) => /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(value);
 
-const resolveAgentStateSshTarget = (): string => {
+const resolveAgentStateSshTarget = (): string | null => {
+  const configured = resolveConfiguredSshTarget(process.env);
+  if (configured) return configured;
   const settings = loadStudioSettings();
-  return resolveGatewaySshTargetFromGatewayUrl(settings.gateway?.url ?? "", process.env);
+  const gatewayUrl = settings.gateway?.url ?? "";
+  if (isLocalGatewayUrl(gatewayUrl)) return null;
+  return resolveGatewaySshTargetFromGatewayUrl(gatewayUrl, process.env);
 };
 
 const isDaytonaGateway = (): boolean => {
@@ -56,7 +65,9 @@ export async function POST(request: Request) {
     }
 
     const sshTarget = resolveAgentStateSshTarget();
-    const result = trashAgentStateOverSsh({ sshTarget, agentId: trimmed });
+    const result = sshTarget
+      ? trashAgentStateOverSsh({ sshTarget, agentId: trimmed })
+      : trashAgentStateLocally({ agentId: trimmed });
     return NextResponse.json({ result });
   } catch (err) {
     const message =
@@ -92,11 +103,16 @@ export async function PUT(request: Request) {
     }
 
     const sshTarget = resolveAgentStateSshTarget();
-    const result = restoreAgentStateOverSsh({
-      sshTarget,
-      agentId: trimmedAgent,
-      trashDir: trimmedTrash,
-    });
+    const result = sshTarget
+      ? restoreAgentStateOverSsh({
+          sshTarget,
+          agentId: trimmedAgent,
+          trashDir: trimmedTrash,
+        })
+      : restoreAgentStateLocally({
+          agentId: trimmedAgent,
+          trashDir: trimmedTrash,
+        });
     return NextResponse.json({ result });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to restore agent state.";

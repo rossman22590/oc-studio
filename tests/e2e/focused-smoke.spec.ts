@@ -7,7 +7,7 @@ test("loads focused studio empty state", async ({ page }) => {
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          settings: { version: 1, gateway: null, focused: {}, sessions: {} },
+          settings: { version: 1, gateway: null, focused: {}, avatars: {} },
         }),
       });
       return;
@@ -20,13 +20,13 @@ test("loads focused studio empty state", async ({ page }) => {
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        settings: { version: 1, gateway: null, focused: {}, sessions: {} },
+        settings: { version: 1, gateway: null, focused: {}, avatars: {} },
       }),
     });
   });
 
   await page.goto("/");
 
-  await expect(page.getByTestId("fleet-sidebar")).toBeVisible();
-  await expect(page.getByTestId("focused-agent-panel")).toBeVisible();
+  await expect(page.getByTestId("studio-menu-toggle")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Connect" }).first()).toBeVisible();
 });

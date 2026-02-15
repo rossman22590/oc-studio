@@ -23,6 +23,14 @@ describe("studio settings normalization", () => {
     expect(normalized.gateway?.token).toBe("token");
   });
 
+  it("normalizes loopback ip gateway urls to localhost", () => {
+    const normalized = normalizeStudioSettings({
+      gateway: { url: "ws://127.0.0.1:18789", token: "token" },
+    });
+
+    expect(normalized.gateway?.url).toBe("ws://localhost:18789");
+  });
+
   it("normalizes_dual_mode_preferences", () => {
     const normalized = normalizeStudioSettings({
       focused: {
@@ -65,7 +73,7 @@ describe("studio settings normalization", () => {
     const merged = mergeStudioSettings(current, {
       focused: {
         "ws://localhost:18789": {
-          filter: "needs-attention",
+          filter: "idle",
         },
       },
     });
@@ -73,7 +81,7 @@ describe("studio settings normalization", () => {
     expect(merged.focused["ws://localhost:18789"]).toEqual({
       mode: "focused",
       selectedAgentId: "main",
-      filter: "needs-attention",
+      filter: "idle",
     });
   });
 

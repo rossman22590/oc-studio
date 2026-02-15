@@ -3,14 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --webpack",
-    "dev:turbo": "next dev",
+    "dev": "node server/index.js --dev",
+    "dev:turbo": "node server/index.js --dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node server/index.js",
     "lint": "eslint .",
     "cleanup:ux-artifacts": "node scripts/cleanup-ux-artifacts.mjs",
     "sync:gateway-client": "node scripts/sync-openclaw-gateway-client.ts",
     "migrate:architecture": "node scripts/migrate-architecture.ts",
+    "studio:setup": "node scripts/studio-setup.js",
+    "smoke:dev-server": "node scripts/smoke-dev-server.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
     "e2e": "playwright test"
@@ -35,6 +37,7 @@
     "react-mentions-ts": "^5.4.7",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.4.0",
+    "ws": "^8.18.3",
     "three": "^0.182.0"
   },
   "devDependencies": {
@@ -45,6 +48,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/ws": "^8.18.1",
     "eslint": "^9",
     "eslint-config-next": "16.1.4",
     "eslint-config-prettier": "^10.1.8",

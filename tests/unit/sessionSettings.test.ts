@@ -60,4 +60,25 @@ describe("session settings sync helper", () => {
       model: null,
     });
   });
+
+  it("patches exec session overrides without model settings", async () => {
+    const client = {
+      call: vi.fn(async () => ({ ok: true })),
+    } as unknown as GatewayClient;
+
+    await syncGatewaySessionSettings({
+      client,
+      sessionKey: "agent:1:studio:abc",
+      execHost: "gateway",
+      execSecurity: "allowlist",
+      execAsk: "always",
+    });
+
+    expect(client.call).toHaveBeenCalledWith("sessions.patch", {
+      key: "agent:1:studio:abc",
+      execHost: "gateway",
+      execSecurity: "allowlist",
+      execAsk: "always",
+    });
+  });
 });

@@ -9,10 +9,10 @@ export const metadata: Metadata = {
     description: "Orchestrate, monitor, and collaborate with your AI agents through an immersive 3D workspace. Real-time control, swarm dispatch, kanban boards, and more.",
     images: [
       {
-        url: "/og-image",
+        url: "https://machineclaw.myapps.ai/og-image",
         width: 1200,
         height: 630,
-        alt: "MachineClaw — AI Agent Command Center",
+        alt: "MachineClaw Studio",
       },
     ],
   },

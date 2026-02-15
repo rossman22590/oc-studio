@@ -50,6 +50,16 @@ describe("hydrateAgentFleetFromGateway", () => {
           ],
         };
       }
+      if (method === "exec.approvals.get") {
+        return {
+          file: {
+            agents: {
+              "agent-1": { security: "allowlist", ask: "always" },
+              "agent-2": { security: "full", ask: "off" },
+            },
+          },
+        };
+      }
       if (method === "sessions.list") {
         const { agentId, search } = params as Record<string, unknown>;
         return {
@@ -106,6 +116,7 @@ describe("hydrateAgentFleetFromGateway", () => {
     });
 
     expect(call).toHaveBeenCalledWith("agents.list", {});
+    expect(call).toHaveBeenCalledWith("exec.approvals.get", {});
     expect(result.seeds).toHaveLength(2);
     expect(result.seeds[0]).toEqual(
       expect.objectContaining({
@@ -116,11 +127,22 @@ describe("hydrateAgentFleetFromGateway", () => {
         avatarUrl: "https://example.com/one.png",
         model: "openai/gpt-4.1",
         thinkingLevel: "medium",
+        sessionExecHost: "gateway",
+        sessionExecSecurity: "allowlist",
+        sessionExecAsk: "always",
+      })
+    );
+    expect(result.seeds[1]).toEqual(
+      expect.objectContaining({
+        agentId: "agent-2",
+        sessionExecHost: "gateway",
+        sessionExecSecurity: "full",
+        sessionExecAsk: "off",
       })
     );
     expect(result.sessionCreatedAgentIds).toEqual(["agent-1", "agent-2"]);
+    expect(result.sessionSettingsSyncedAgentIds).toEqual([]);
     expect(result.suggestedSelectedAgentId).toBe("agent-2");
     expect(result.summaryPatches.length).toBeGreaterThan(0);
   });
 });
-

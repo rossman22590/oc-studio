@@ -28,9 +28,30 @@ const TRACE_MARKDOWN_PREFIX = "[[trace]]";
 
 const TOOL_CALL_PREFIX = "[[tool]]";
 const TOOL_RESULT_PREFIX = "[[tool-result]]";
+const META_PREFIX = "[[meta]]";
 
 export type AgentInstructionParams = {
   message: string;
+};
+
+const EXEC_APPROVAL_WAIT_POLICY = [
+  "Execution approval policy:",
+  "- If any tool result says approval is required or pending, stop immediately.",
+  "- Do not call additional tools and do not switch to alternate approaches.",
+  'If approved command output is unavailable, reply exactly: "Waiting for approved command result."',
+].join("\n");
+
+const stripAppendedExecApprovalPolicy = (text: string): string => {
+  const suffix = `\n\n${EXEC_APPROVAL_WAIT_POLICY}`;
+  if (!text.endsWith(suffix)) return text;
+  return text.slice(0, -suffix.length);
+};
+
+const ASSISTANT_PREFIX_RE = /^\[reply_to_current\]\s*(?:\|\s*)?/i;
+const stripAssistantPrefix = (text: string): string => {
+  if (!text) return text;
+  if (!ASSISTANT_PREFIX_RE.test(text)) return text;
+  return text.replace(ASSISTANT_PREFIX_RE, "").trimStart();
 };
 
 type ToolCallRecord = {
@@ -50,6 +71,7 @@ type ToolResultRecord = {
 const looksLikeEnvelopeHeader = (header: string): boolean => {
   if (/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z\b/.test(header)) return true;
   if (/\d{4}-\d{2}-\d{2} \d{2}:\d{2}\b/.test(header)) return true;
+  if (/[A-Za-z]{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2}\b/.test(header)) return true;
   return ENVELOPE_CHANNELS.some((label) => header.startsWith(`${label} `));
 };
 
@@ -119,8 +141,12 @@ export const extractText = (message: unknown): string | null => {
   const role = typeof m.role === "string" ? m.role : "";
   const content = m.content;
 
-  const postProcess = (value: string): string =>
-    role === "assistant" ? stripThinkingTagsFromAssistantText(value) : stripEnvelope(value);
+  const postProcess = (value: string): string => {
+    if (role === "assistant") {
+      return stripAssistantPrefix(stripThinkingTagsFromAssistantText(value));
+    }
+    return stripAppendedExecApprovalPolicy(stripEnvelope(value));
+  };
 
   if (typeof content === "string") {
     return postProcess(content);
@@ -297,7 +323,7 @@ export const formatThinkingMarkdown = (text: string): string => {
     .filter(Boolean)
     .map((line) => `_${line}_`);
   if (lines.length === 0) return "";
-  return `${TRACE_MARKDOWN_PREFIX}\n${lines.join("\n")}`;
+  return `${TRACE_MARKDOWN_PREFIX}\n${lines.join("\n\n")}`;
 };
 
 export const isTraceMarkdown = (line: string): boolean =>
@@ -426,6 +452,43 @@ export const extractToolLines = (message: unknown): string[] => {
 export const isToolMarkdown = (line: string): boolean =>
   line.startsWith(TOOL_CALL_PREFIX) || line.startsWith(TOOL_RESULT_PREFIX);
 
+export const isMetaMarkdown = (line: string): boolean => line.startsWith(META_PREFIX);
+
+export const formatMetaMarkdown = (meta: {
+  role: "user" | "assistant";
+  timestamp: number;
+  thinkingDurationMs?: number | null;
+}): string => {
+  return `${META_PREFIX}${JSON.stringify({
+    role: meta.role,
+    timestamp: meta.timestamp,
+    ...(typeof meta.thinkingDurationMs === "number" ? { thinkingDurationMs: meta.thinkingDurationMs } : {}),
+  })}`;
+};
+
+export const parseMetaMarkdown = (
+  line: string
+): { role: "user" | "assistant"; timestamp: number; thinkingDurationMs?: number } | null => {
+  if (!isMetaMarkdown(line)) return null;
+  const raw = line.slice(META_PREFIX.length).trim();
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const role = parsed.role === "user" || parsed.role === "assistant" ? parsed.role : null;
+    const timestamp = typeof parsed.timestamp === "number" ? parsed.timestamp : null;
+    if (!role || !timestamp || !Number.isFinite(timestamp) || timestamp <= 0) return null;
+    const thinkingDurationMs =
+      typeof parsed.thinkingDurationMs === "number" && Number.isFinite(parsed.thinkingDurationMs)
+        ? parsed.thinkingDurationMs
+        : undefined;
+    return thinkingDurationMs !== undefined
+      ? { role, timestamp, thinkingDurationMs }
+      : { role, timestamp };
+  } catch {
+    return null;
+  }
+};
+
 export const parseToolMarkdown = (
   line: string
 ): { kind: "call" | "result"; label: string; body: string } => {
@@ -443,16 +506,14 @@ export const parseToolMarkdown = (
 export const buildAgentInstruction = ({
   message,
 }: AgentInstructionParams): string => {
-  const trimmed = message.trim();
-  if (!trimmed) return trimmed;
-  if (trimmed.startsWith("/")) return trimmed;
-  return trimmed;
+  return message.trim();
 };
 
 const PROJECT_PROMPT_BLOCK_RE = /^(?:Project|Workspace) path:[\s\S]*?\n\s*\n/i;
 const PROJECT_PROMPT_INLINE_RE = /^(?:Project|Workspace) path:[\s\S]*?memory_search\.\s*/i;
 const RESET_PROMPT_RE =
   /^A new session was started via \/new or \/reset[\s\S]*?reasoning\.\s*/i;
+const SYSTEM_EVENT_BLOCK_RE = /^System:\s*\[[^\]]+\][\s\S]*?\n\s*\n/;
 const MESSAGE_ID_RE = /\s*\[message_id:[^\]]+\]\s*/gi;
 const UI_METADATA_PREFIX_RE =
   /^(?:Project path:|Workspace path:|A new session was started via \/new or \/reset)/i;
@@ -462,6 +523,7 @@ const HEARTBEAT_PATH_RE = /Heartbeat file path:/i;
 export const stripUiMetadata = (text: string) => {
   if (!text) return text;
   let cleaned = text.replace(RESET_PROMPT_RE, "");
+  cleaned = cleaned.replace(SYSTEM_EVENT_BLOCK_RE, "");
   const beforeProjectStrip = cleaned;
   cleaned = cleaned.replace(PROJECT_PROMPT_INLINE_RE, "");
   if (cleaned === beforeProjectStrip) {

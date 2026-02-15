@@ -86,7 +86,7 @@ describe("runtime event bridge helpers", () => {
   it("suppresses assistant stream publish when chat stream already owns it", () => {
     expect(
       shouldPublishAssistantStream({
-        mergedRaw: "hello",
+        nextText: "hello",
         rawText: "",
         hasChatEvents: true,
         currentStreamText: "already streaming",
@@ -94,7 +94,7 @@ describe("runtime event bridge helpers", () => {
     ).toBe(false);
     expect(
       shouldPublishAssistantStream({
-        mergedRaw: "hello",
+        nextText: "hello",
         rawText: "",
         hasChatEvents: false,
         currentStreamText: "already streaming",
@@ -102,12 +102,20 @@ describe("runtime event bridge helpers", () => {
     ).toBe(true);
     expect(
       shouldPublishAssistantStream({
-        mergedRaw: "",
+        nextText: "",
         rawText: "",
         hasChatEvents: false,
         currentStreamText: null,
       })
     ).toBe(false);
+    expect(
+      shouldPublishAssistantStream({
+        nextText: "already streaming plus more",
+        rawText: "",
+        hasChatEvents: true,
+        currentStreamText: "already streaming",
+      })
+    ).toBe(true);
   });
 
   it("updates preview and activity from assistant chat", () => {
@@ -297,6 +305,7 @@ describe("runtime event bridge helpers", () => {
 
     expect(history.lines).toEqual([
       "> hello there",
+      '[[meta]]{"role":"assistant","timestamp":1704067200000}',
       "[[trace]]\n_step one_",
       "assistant final",
       "[[tool-result]] shell (call-1)\nok\n```text\ndone\n```",
@@ -338,10 +347,14 @@ describe("runtime event bridge helpers", () => {
       runId: null,
     });
     expect(unchanged).toEqual({
-      historyLoadedAt: 200,
+      outputLines: ['[[meta]]{"role":"assistant","timestamp":1704067200000}', "done"],
+      lastResult: "done",
+      latestPreview: "done",
       lastAssistantMessageAt: Date.parse("2024-01-01T00:00:00.000Z"),
+      historyLoadedAt: 200,
       status: "idle",
       runId: null,
+      runStartedAt: null,
       streamText: null,
       thinkingTrace: null,
     });
@@ -361,7 +374,7 @@ describe("runtime event bridge helpers", () => {
       runId: null,
     });
     expect(merged).toEqual({
-      outputLines: ["> hello", "pending line", "assistant final"],
+      outputLines: ["> hello", "pending line", '[[meta]]{"role":"assistant","timestamp":1704067202000}', "assistant final"],
       lastResult: "assistant final",
       latestPreview: "assistant final",
       lastAssistantMessageAt: Date.parse("2024-01-01T00:00:02.000Z"),
@@ -369,8 +382,32 @@ describe("runtime event bridge helpers", () => {
       historyLoadedAt: 300,
       status: "idle",
       runId: null,
+      runStartedAt: null,
       streamText: null,
       thinkingTrace: null,
+    });
+  });
+
+  it("prefers canonical history when optimistic user content differs only by whitespace", () => {
+    const patch = buildHistorySyncPatch({
+      messages: [
+        {
+          role: "user",
+          timestamp: "2024-01-01T00:00:03.000Z",
+          content: "line one line two",
+        },
+      ],
+      currentLines: ["> line one\n\nline two"],
+      loadedAt: 400,
+      status: "idle",
+      runId: null,
+    });
+
+    expect(patch).toEqual({
+      outputLines: ['[[meta]]{"role":"user","timestamp":1704067203000}', "> line one line two"],
+      lastResult: null,
+      lastUserMessage: "line one line two",
+      historyLoadedAt: 400,
     });
   });
 });

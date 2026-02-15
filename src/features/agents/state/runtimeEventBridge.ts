@@ -3,6 +3,7 @@ import {
   extractText,
   extractThinking,
   extractToolLines,
+  formatMetaMarkdown,
   formatThinkingMarkdown,
   isHeartbeatPrompt,
   isUiMetadataPrefix,
@@ -40,7 +41,7 @@ export type LifecycleTransition =
   | LifecycleTransitionIgnore;
 
 type ShouldPublishAssistantStreamInput = {
-  mergedRaw: string;
+  nextText: string;
   rawText: string;
   hasChatEvents: boolean;
   currentStreamText: string | null;
@@ -214,6 +215,11 @@ export const buildHistoryLines = (messages: ChatHistoryMessage[]): HistoryLinesR
   let lastAssistantAt: number | null = null;
   let lastRole: string | null = null;
   let lastUser: string | null = null;
+  const isRestartSentinelMessage = (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return false;
+    return /^(?:System:\s*\[[^\]]+\]\s*)?GatewayRestart:\s*\{/.test(trimmed);
+  };
   for (const message of messages) {
     const role = typeof message.role === "string" ? message.role : "other";
     const extracted = extractText(message);
@@ -230,7 +236,12 @@ export const buildHistoryLines = (messages: ChatHistoryMessage[]): HistoryLinesR
     }
     if (role === "user") {
       if (text && isHeartbeatPrompt(text)) continue;
+      if (text && isRestartSentinelMessage(text)) continue;
       if (text) {
+        const at = extractMessageTimestamp(message);
+        if (typeof at === "number") {
+          lines.push(formatMetaMarkdown({ role: "user", timestamp: at }));
+        }
         lines.push(`> ${text}`);
         lastUser = text;
       }
@@ -239,6 +250,13 @@ export const buildHistoryLines = (messages: ChatHistoryMessage[]): HistoryLinesR
       const at = extractMessageTimestamp(message);
       if (typeof at === "number") {
         lastAssistantAt = at;
+      }
+      if (text && !thinking && toolLines.length === 0 && text === lastAssistant) {
+        lastRole = "assistant";
+        continue;
+      }
+      if (typeof at === "number") {
+        lines.push(formatMetaMarkdown({ role: "assistant", timestamp: at }));
       }
       if (thinking) {
         lines.push(thinking);
@@ -269,6 +287,14 @@ export const mergeHistoryWithPending = (
   historyLines: string[],
   currentLines: string[]
 ): string[] => {
+  const normalizeUserLine = (line: string): string | null => {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith(">")) return null;
+    const text = trimmed.replace(/^>\s?/, "");
+    const normalized = text.replace(/\s+/g, " ").trim();
+    return normalized || null;
+  };
+
   if (currentLines.length === 0) return historyLines;
   if (historyLines.length === 0) return historyLines;
   const merged = [...historyLines];
@@ -284,6 +310,20 @@ export const mergeHistoryWithPending = (
     if (foundIndex !== -1) {
       cursor = foundIndex + 1;
       continue;
+    }
+    const normalizedUserLine = normalizeUserLine(line);
+    if (normalizedUserLine) {
+      for (let i = cursor; i < merged.length; i += 1) {
+        const normalizedMergedLine = normalizeUserLine(merged[i] ?? "");
+        if (!normalizedMergedLine) continue;
+        if (normalizedMergedLine !== normalizedUserLine) continue;
+        foundIndex = i;
+        break;
+      }
+      if (foundIndex !== -1) {
+        cursor = foundIndex + 1;
+        continue;
+      }
     }
     merged.splice(cursor, 0, line);
     cursor += 1;
@@ -312,6 +352,7 @@ export const buildHistorySyncPatch = ({
     if (!runId && status === "running" && lastRole === "assistant") {
       patch.status = "idle";
       patch.runId = null;
+      patch.runStartedAt = null;
       patch.streamText = null;
       patch.thinkingTrace = null;
     }
@@ -328,6 +369,7 @@ export const buildHistorySyncPatch = ({
   if (!runId && status === "running" && lastRole === "assistant") {
     patch.status = "idle";
     patch.runId = null;
+    patch.runStartedAt = null;
     patch.streamText = null;
     patch.thinkingTrace = null;
   }
@@ -404,6 +446,7 @@ export const resolveLifecyclePatch = (input: LifecyclePatchInput): LifecycleTran
       patch: {
         status: "running",
         runId: incomingRunId,
+        runStartedAt: lastActivityAt,
         sessionCreated: true,
         lastActivityAt,
       },
@@ -419,6 +462,7 @@ export const resolveLifecyclePatch = (input: LifecyclePatchInput): LifecycleTran
       patch: {
         status: "error",
         runId: null,
+        runStartedAt: null,
         streamText: null,
         thinkingTrace: null,
         lastActivityAt,
@@ -431,6 +475,7 @@ export const resolveLifecyclePatch = (input: LifecyclePatchInput): LifecycleTran
     patch: {
       status: "idle",
       runId: null,
+      runStartedAt: null,
       streamText: null,
       thinkingTrace: null,
       lastActivityAt,
@@ -439,15 +484,19 @@ export const resolveLifecyclePatch = (input: LifecyclePatchInput): LifecycleTran
 };
 
 export const shouldPublishAssistantStream = ({
-  mergedRaw,
+  nextText,
   rawText,
   hasChatEvents,
   currentStreamText,
 }: ShouldPublishAssistantStreamInput): boolean => {
-  if (!mergedRaw.trim()) return false;
+  const next = nextText.trim();
+  if (!next) return false;
   if (!hasChatEvents) return true;
   if (rawText.trim()) return true;
-  return !currentStreamText?.trim();
+  const current = currentStreamText?.trim() ?? "";
+  if (!current) return true;
+  if (next.length <= current.length) return false;
+  return next.startsWith(current);
 };
 
 export const getChatSummaryPatch = (

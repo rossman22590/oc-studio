@@ -1,14 +1,13 @@
 import { buildAgentMainSessionKey, isSameSessionKey } from "@/lib/gateway/GatewayClient";
-import { resolveConfiguredModelKey, type GatewayModelPolicySnapshot } from "@/lib/gateway/models";
-import { resolveAgentAvatarSeed, type StudioSettings } from "@/lib/studio/settings";
+import { type GatewayModelPolicySnapshot } from "@/lib/gateway/models";
+import { type StudioSettings } from "@/lib/studio/settings";
 import {
-  buildSummarySnapshotPatches,
   type SummaryPreviewSnapshot,
-  type SummarySnapshotAgent,
   type SummarySnapshotPatch,
   type SummaryStatusSnapshot,
 } from "@/features/agents/state/runtimeEventBridge";
 import type { AgentStoreSeed } from "@/features/agents/state/store";
+import { deriveHydrateAgentFleetResult } from "@/features/agents/operations/agentFleetHydrationDerivation";
 
 type GatewayClientLike = {
   call: (method: string, params: unknown) => Promise<unknown>;
@@ -39,63 +38,25 @@ type SessionsListEntry = {
   thinkingLevel?: string;
   modelProvider?: string;
   model?: string;
+  execHost?: string | null;
+  execSecurity?: string | null;
+  execAsk?: string | null;
 };
 
 type SessionsListResult = {
   sessions?: SessionsListEntry[];
 };
 
-const resolveAgentName = (agent: AgentsListResult["agents"][number]) => {
-  const fromList = typeof agent.name === "string" ? agent.name.trim() : "";
-  if (fromList) return fromList;
-  const fromIdentity = typeof agent.identity?.name === "string" ? agent.identity.name.trim() : "";
-  if (fromIdentity) return fromIdentity;
-  return agent.id;
-};
-
-const resolveAgentAvatarUrl = (agent: AgentsListResult["agents"][number]) => {
-  const candidate = agent.identity?.avatarUrl ?? agent.identity?.avatar ?? null;
-  if (typeof candidate !== "string") return null;
-  const trimmed = candidate.trim();
-  if (!trimmed) return null;
-  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed;
-  if (trimmed.startsWith("data:image/")) return trimmed;
-  return null;
-};
-
-const resolveDefaultModelForAgent = (
-  agentId: string,
-  snapshot: GatewayModelPolicySnapshot | null
-): string | null => {
-  const resolvedAgentId = agentId.trim();
-  if (!resolvedAgentId) return null;
-  const defaults = snapshot?.config?.agents?.defaults;
-  const modelAliases = defaults?.models;
-  const agentEntry =
-    snapshot?.config?.agents?.list?.find((entry) => entry?.id?.trim() === resolvedAgentId) ??
-    null;
-  const agentModel = agentEntry?.model;
-  let raw: string | null = null;
-  if (typeof agentModel === "string") {
-    raw = agentModel;
-  } else if (agentModel && typeof agentModel === "object") {
-    raw = agentModel.primary ?? null;
-  }
-  if (!raw) {
-    const defaultModel = defaults?.model;
-    if (typeof defaultModel === "string") {
-      raw = defaultModel;
-    } else if (defaultModel && typeof defaultModel === "object") {
-      raw = defaultModel.primary ?? null;
-    }
-  }
-  if (!raw) return null;
-  return resolveConfiguredModelKey(raw, modelAliases);
+type ExecApprovalsSnapshot = {
+  file?: {
+    agents?: Record<string, { security?: string | null; ask?: string | null }>;
+  };
 };
 
 export type HydrateAgentFleetResult = {
   seeds: AgentStoreSeed[];
   sessionCreatedAgentIds: string[];
+  sessionSettingsSyncedAgentIds: string[];
   summaryPatches: SummarySnapshotPatch[];
   suggestedSelectedAgentId: string | null;
   configSnapshot: GatewayModelPolicySnapshot | null;
@@ -135,6 +96,18 @@ export async function hydrateAgentFleetFromGateway(params: {
     }
   }
 
+  let execApprovalsSnapshot: ExecApprovalsSnapshot | null = null;
+  try {
+    execApprovalsSnapshot = (await params.client.call(
+      "exec.approvals.get",
+      {}
+    )) as ExecApprovalsSnapshot;
+  } catch (err) {
+    if (!params.isDisconnectLikeError(err)) {
+      logError("Failed to load exec approvals while loading agents.", err);
+    }
+  }
+
   const agentsResult = (await params.client.call("agents.list", {})) as AgentsListResult;
   const mainKey = agentsResult.mainKey?.trim() || "main";
 
@@ -163,6 +136,7 @@ export async function hydrateAgentFleetFromGateway(params: {
     })
   );
 
+<<<<<<< HEAD
   /* Restore persisted display prefs (toolCallingEnabled / showThinkingTraces) from localStorage */
   let displayPrefs: Record<string, { toolCallingEnabled?: boolean; showThinkingTraces?: boolean }> = {};
   try {
@@ -204,28 +178,19 @@ export async function hydrateAgentFleetFromGateway(params: {
     sessionCreatedAgentIds.push(seed.agentId);
   }
 
-  let summaryPatches: SummarySnapshotPatch[] = [];
-  let suggestedSelectedAgentId: string | null = null;
+  let statusSummary: SummaryStatusSnapshot | null = null;
+  let previewResult: SummaryPreviewSnapshot | null = null;
   try {
-    const activeAgents: SummarySnapshotAgent[] = [];
-    for (const seed of seeds) {
-      const mainSession = mainSessionKeyByAgent.get(seed.agentId) ?? null;
-      if (!mainSession) continue;
-      activeAgents.push({
-        agentId: seed.agentId,
-        sessionKey: seed.sessionKey,
-        status: "idle",
-      });
-    }
     const sessionKeys = Array.from(
       new Set(
-        activeAgents
-          .map((agent) => agent.sessionKey)
-          .filter((key): key is string => typeof key === "string" && key.trim().length > 0)
+        agentsResult.agents
+          .filter((agent) => Boolean(mainSessionKeyByAgent.get(agent.id)))
+          .map((agent) => buildAgentMainSessionKey(agent.id, mainKey))
+          .filter((key) => key.trim().length > 0)
       )
     ).slice(0, 64);
     if (sessionKeys.length > 0) {
-      const [statusSummary, previewResult] = await Promise.all([
+      const snapshot = await Promise.all([
         params.client.call("status", {}) as Promise<SummaryStatusSnapshot>,
         params.client.call("sessions.preview", {
           keys: sessionKeys,
@@ -233,28 +198,8 @@ export async function hydrateAgentFleetFromGateway(params: {
           maxChars: 240,
         }) as Promise<SummaryPreviewSnapshot>,
       ]);
-      summaryPatches = buildSummarySnapshotPatches({
-        agents: activeAgents,
-        statusSummary,
-        previewResult,
-      });
-
-      const assistantAtByAgentId = new Map<string, number>();
-      for (const entry of summaryPatches) {
-        if (typeof entry.patch.lastAssistantMessageAt === "number") {
-          assistantAtByAgentId.set(entry.agentId, entry.patch.lastAssistantMessageAt);
-        }
-      }
-
-      let bestAgentId: string | null = seeds[0]?.agentId ?? null;
-      let bestTs = bestAgentId ? (assistantAtByAgentId.get(bestAgentId) ?? 0) : 0;
-      for (const seed of seeds) {
-        const ts = assistantAtByAgentId.get(seed.agentId) ?? 0;
-        if (ts <= bestTs) continue;
-        bestTs = ts;
-        bestAgentId = seed.agentId;
-      }
-      suggestedSelectedAgentId = bestAgentId;
+      statusSummary = snapshot[0] ?? null;
+      previewResult = snapshot[1] ?? null;
     }
   } catch (err) {
     if (!params.isDisconnectLikeError(err)) {
@@ -262,12 +207,16 @@ export async function hydrateAgentFleetFromGateway(params: {
     }
   }
 
-  return {
-    seeds,
-    sessionCreatedAgentIds,
-    summaryPatches,
-    suggestedSelectedAgentId,
+  const derived = deriveHydrateAgentFleetResult({
+    gatewayUrl: params.gatewayUrl,
     configSnapshot: configSnapshot ?? null,
-  };
-}
+    settings,
+    execApprovalsSnapshot,
+    agentsResult,
+    mainSessionByAgentId: mainSessionKeyByAgent,
+    statusSummary,
+    previewResult,
+  });
 
+  return derived;
+}

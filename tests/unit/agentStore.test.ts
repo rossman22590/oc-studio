@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   agentStoreReducer,
   buildNewSessionAgentPatch,
-  getAttentionForAgent,
   getFilteredAgents,
   initialAgentStoreState,
   type AgentStoreSeed,
@@ -27,6 +26,56 @@ describe("agent store", () => {
     expect(next.agents[0].thinkingLevel).toBe("high");
     expect(next.agents[0].sessionCreated).toBe(false);
     expect(next.agents[0].outputLines).toEqual([]);
+  });
+
+  it("hydrates agents with a requested selection when present", () => {
+    const seeds: AgentStoreSeed[] = [
+      {
+        agentId: "agent-1",
+        name: "Agent One",
+        sessionKey: "agent:agent-1:main",
+      },
+      {
+        agentId: "agent-2",
+        name: "Agent Two",
+        sessionKey: "agent:agent-2:main",
+      },
+    ];
+    const next = agentStoreReducer(initialAgentStoreState, {
+      type: "hydrateAgents",
+      agents: seeds,
+      selectedAgentId: " agent-2 ",
+    });
+    expect(next.selectedAgentId).toBe("agent-2");
+  });
+
+  it("keeps existing selection when requested selection is invalid", () => {
+    const seeds: AgentStoreSeed[] = [
+      {
+        agentId: "agent-1",
+        name: "Agent One",
+        sessionKey: "agent:agent-1:main",
+      },
+      {
+        agentId: "agent-2",
+        name: "Agent Two",
+        sessionKey: "agent:agent-2:main",
+      },
+    ];
+    let state = agentStoreReducer(initialAgentStoreState, {
+      type: "hydrateAgents",
+      agents: seeds,
+    });
+    state = agentStoreReducer(state, {
+      type: "selectAgent",
+      agentId: "agent-2",
+    });
+    state = agentStoreReducer(state, {
+      type: "hydrateAgents",
+      agents: seeds,
+      selectedAgentId: "missing-agent",
+    });
+    expect(state.selectedAgentId).toBe("agent-2");
   });
 
   it("builds a patch that resets runtime state for a session reset", () => {
@@ -78,6 +127,7 @@ describe("agent store", () => {
     expect(patch.historyLoadedAt).toBeNull();
     expect(patch.lastUserMessage).toBeNull();
     expect(patch.runId).toBeNull();
+    expect(patch.runStartedAt).toBeNull();
     expect(patch.latestPreview).toBeNull();
     expect(patch.latestOverride).toBeNull();
     expect(patch.latestOverrideKind).toBeNull();
@@ -172,9 +222,6 @@ describe("agent store", () => {
     const second = withActivity.agents.find((agent) => agent.agentId === "agent-2");
     expect(second?.hasUnseenActivity).toBe(true);
     expect(second?.lastActivityAt).toBe(1700000000000);
-    expect(getAttentionForAgent(second!, withActivity.selectedAgentId)).toBe(
-      "needs-attention"
-    );
 
     const selected = agentStoreReducer(withActivity, {
       type: "selectAgent",
@@ -184,7 +231,7 @@ describe("agent store", () => {
     expect(cleared?.hasUnseenActivity).toBe(false);
   });
 
-  it("filters_agents_by_attention_and_status", () => {
+  it("filters_agents_by_status", () => {
     const seeds: AgentStoreSeed[] = [
       {
         agentId: "agent-1",
@@ -209,7 +256,7 @@ describe("agent store", () => {
     state = agentStoreReducer(state, {
       type: "updateAgent",
       agentId: "agent-1",
-      patch: { awaitingUserInput: true },
+      patch: { status: "idle" },
     });
     state = agentStoreReducer(state, {
       type: "updateAgent",
@@ -221,20 +268,12 @@ describe("agent store", () => {
       agentId: "agent-3",
       patch: { status: "error" },
     });
-    state = agentStoreReducer(state, {
-      type: "markActivity",
-      agentId: "agent-2",
-      at: 1700000000001,
-    });
 
     expect(getFilteredAgents(state, "all").map((agent) => agent.agentId)).toEqual([
-      "agent-1",
       "agent-2",
+      "agent-1",
       "agent-3",
     ]);
-    expect(
-      getFilteredAgents(state, "needs-attention").map((agent) => agent.agentId)
-    ).toEqual(["agent-1", "agent-2", "agent-3"]);
     expect(getFilteredAgents(state, "running").map((agent) => agent.agentId)).toEqual([
       "agent-2",
     ]);
@@ -268,9 +307,6 @@ describe("agent store", () => {
 
     const before = state.agents.find((agent) => agent.agentId === "agent-2");
     expect(before?.hasUnseenActivity).toBe(true);
-    expect(getAttentionForAgent(before!, state.selectedAgentId)).toBe(
-      "needs-attention"
-    );
 
     state = agentStoreReducer(state, {
       type: "selectAgent",
@@ -278,7 +314,6 @@ describe("agent store", () => {
     });
     const after = state.agents.find((agent) => agent.agentId === "agent-2");
     expect(after?.hasUnseenActivity).toBe(false);
-    expect(getAttentionForAgent(after!, state.selectedAgentId)).toBe("normal");
   });
 
   it("sorts_filtered_agents_by_latest_assistant_message", () => {
@@ -327,6 +362,40 @@ describe("agent store", () => {
     expect(getFilteredAgents(state, "running").map((agent) => agent.agentId)).toEqual([
       "agent-2",
       "agent-3",
+      "agent-1",
+    ]);
+  });
+
+  it("prioritizes_running_agents_in_all_filter_even_without_assistant_reply", () => {
+    const seeds: AgentStoreSeed[] = [
+      {
+        agentId: "agent-1",
+        name: "Agent One",
+        sessionKey: "agent:agent-1:main",
+      },
+      {
+        agentId: "agent-2",
+        name: "Agent Two",
+        sessionKey: "agent:agent-2:main",
+      },
+    ];
+    let state = agentStoreReducer(initialAgentStoreState, {
+      type: "hydrateAgents",
+      agents: seeds,
+    });
+    state = agentStoreReducer(state, {
+      type: "updateAgent",
+      agentId: "agent-1",
+      patch: { status: "idle", lastAssistantMessageAt: 900 },
+    });
+    state = agentStoreReducer(state, {
+      type: "updateAgent",
+      agentId: "agent-2",
+      patch: { status: "running", runStartedAt: 1000, lastAssistantMessageAt: null },
+    });
+
+    expect(getFilteredAgents(state, "all").map((agent) => agent.agentId)).toEqual([
+      "agent-2",
       "agent-1",
     ]);
   });

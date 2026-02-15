@@ -12,22 +12,68 @@ import {
 
 const SETTINGS_DIRNAME = "openclaw-studio";
 const SETTINGS_FILENAME = "settings.json";
+const OPENCLAW_CONFIG_FILENAME = "openclaw.json";
 
 export const resolveStudioSettingsPath = () =>
   path.join(resolveStateDir(), SETTINGS_DIRNAME, SETTINGS_FILENAME);
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value && typeof value === "object");
+
+const readOpenclawGatewayDefaults = (): { url: string; token: string } | null => {
+  try {
+    const configPath = path.join(resolveStateDir(), OPENCLAW_CONFIG_FILENAME);
+    if (!fs.existsSync(configPath)) return null;
+    const raw = fs.readFileSync(configPath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed)) return null;
+    const gateway = isRecord(parsed.gateway) ? parsed.gateway : null;
+    if (!gateway) return null;
+    const auth = isRecord(gateway.auth) ? gateway.auth : null;
+    const token = typeof auth?.token === "string" ? auth.token.trim() : "";
+    const port = typeof gateway.port === "number" && Number.isFinite(gateway.port) ? gateway.port : null;
+    if (!token) return null;
+    const url = port ? `ws://localhost:${port}` : "";
+    if (!url) return null;
+    return { url, token };
+  } catch {
+    return null;
+  }
+};
+
+export const loadLocalGatewayDefaults = () => {
+  return readOpenclawGatewayDefaults();
+};
 
 export const loadStudioSettings = (): StudioSettings => {
   try {
     const settingsPath = resolveStudioSettingsPath();
     if (!fs.existsSync(settingsPath)) {
-      return defaultStudioSettings();
+      const defaults = defaultStudioSettings();
+      const gateway = loadLocalGatewayDefaults();
+      return gateway ? { ...defaults, gateway } : defaults;
     }
     const raw = fs.readFileSync(settingsPath, "utf8");
     const parsed = JSON.parse(raw) as unknown;
-    return normalizeStudioSettings(parsed);
+    const settings = normalizeStudioSettings(parsed);
+    // If no token in settings, try to load from openclaw.json
+    if (!settings.gateway?.token) {
+      const gateway = loadLocalGatewayDefaults();
+      if (gateway) {
+        return {
+          ...settings,
+          gateway: settings.gateway?.url?.trim()
+            ? { url: settings.gateway.url.trim(), token: gateway.token }
+            : gateway,
+        };
+      }
+    }
+    return settings;
   } catch (err) {
     console.warn('[Settings] Failed to load settings file, using defaults:', err);
-    return defaultStudioSettings();
+    const defaults = defaultStudioSettings();
+    const gateway = loadLocalGatewayDefaults();
+    return gateway ? { ...defaults, gateway } : defaults;
   }
 };
 
@@ -51,4 +97,3 @@ export const applyStudioSettingsPatch = (patch: StudioSettingsPatch): StudioSett
   saveStudioSettings(next);
   return next;
 };
-

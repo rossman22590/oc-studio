@@ -43,4 +43,22 @@ describe("HeaderBar brain toggle", () => {
     fireEvent.click(brainToggle);
     expect(onBrainFiles).toHaveBeenCalledTimes(1);
   });
+
+  it("opens_menu_and_calls_connection_settings_handler", () => {
+    const onConnectionSettings = vi.fn();
+
+    render(
+      createElement(HeaderBar, {
+        status: "disconnected",
+        onConnectionSettings,
+        onBrainFiles: vi.fn(),
+        brainFilesOpen: false,
+      })
+    );
+
+    fireEvent.click(screen.getByTestId("studio-menu-toggle"));
+    fireEvent.click(screen.getByTestId("gateway-settings-toggle"));
+
+    expect(onConnectionSettings).toHaveBeenCalledTimes(1);
+  });
 });

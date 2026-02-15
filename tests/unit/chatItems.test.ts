@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { buildAgentChatItems, buildFinalAgentChatItems } from "@/features/agents/components/chatItems";
-import { formatThinkingMarkdown } from "@/lib/text/message-extract";
+import { buildAgentChatItems, buildFinalAgentChatItems, summarizeToolLabel } from "@/features/agents/components/chatItems";
+import { formatMetaMarkdown, formatThinkingMarkdown, formatToolCallMarkdown, formatToolResultMarkdown } from "@/lib/text/message-extract";
 
 describe("buildAgentChatItems", () => {
   it("keeps thinking traces aligned with each assistant turn", () => {
@@ -87,5 +87,104 @@ describe("buildFinalAgentChatItems", () => {
     });
 
     expect(items.map((item) => item.kind)).toEqual(["user", "thinking", "assistant"]);
+  });
+
+  it("propagates meta timestamps and thinking duration into subsequent items", () => {
+    const items = buildFinalAgentChatItems({
+      outputLines: [
+        formatMetaMarkdown({ role: "user", timestamp: 1700000000000 }),
+        "> hello",
+        formatMetaMarkdown({ role: "assistant", timestamp: 1700000001234, thinkingDurationMs: 1800 }),
+        formatThinkingMarkdown("plan"),
+        "answer",
+      ],
+      showThinkingTraces: true,
+      toolCallingEnabled: true,
+    });
+
+    expect(items[0]).toMatchObject({ kind: "user", text: "hello", timestampMs: 1700000000000 });
+    expect(items[1]).toMatchObject({
+      kind: "thinking",
+      text: "_plan_",
+      timestampMs: 1700000001234,
+      thinkingDurationMs: 1800,
+    });
+    expect(items[2]).toMatchObject({
+      kind: "assistant",
+      text: "answer",
+      timestampMs: 1700000001234,
+      thinkingDurationMs: 1800,
+    });
+  });
+
+  it("collapses adjacent duplicate user items when optimistic and persisted turns match", () => {
+    const items = buildFinalAgentChatItems({
+      outputLines: [
+        "> hello\n\nworld",
+        formatMetaMarkdown({ role: "user", timestamp: 1700000000000 }),
+        "> hello world",
+      ],
+      showThinkingTraces: true,
+      toolCallingEnabled: true,
+    });
+
+    expect(items).toEqual([
+      {
+        kind: "user",
+        text: "hello world",
+        timestampMs: 1700000000000,
+      },
+    ]);
+  });
+
+  it("does_not_collapse_repeated_user_message_when_second_turn_is_only_optimistic", () => {
+    const items = buildFinalAgentChatItems({
+      outputLines: [
+        formatMetaMarkdown({ role: "user", timestamp: 1700000000000 }),
+        "> repeat",
+        "> repeat",
+      ],
+      showThinkingTraces: true,
+      toolCallingEnabled: true,
+    });
+
+    expect(items).toEqual([
+      {
+        kind: "user",
+        text: "repeat",
+        timestampMs: 1700000000000,
+      },
+      {
+        kind: "user",
+        text: "repeat",
+      },
+    ]);
+  });
+});
+
+describe("summarizeToolLabel", () => {
+  it("hides long tool call ids and prefers showing the command/path/url value", () => {
+    const toolCallLine = formatToolCallMarkdown({
+      id: "call_ABC123|fc_456",
+      name: "functions.exec",
+      arguments: { command: "gh auth status" },
+    });
+
+    const { summaryText: callSummary } = summarizeToolLabel(toolCallLine);
+    expect(callSummary).toContain("gh auth status");
+    expect(callSummary).not.toContain("call_");
+
+    const toolResultLine = formatToolResultMarkdown({
+      toolCallId: "call_ABC123|fc_456",
+      toolName: "functions.exec",
+      details: { status: "completed", exitCode: 0, durationMs: 168 },
+      isError: false,
+      text: "ok",
+    });
+
+    const { summaryText: resultSummary } = summarizeToolLabel(toolResultLine);
+    expect(resultSummary).toContain("completed");
+    expect(resultSummary).toContain("exit 0");
+    expect(resultSummary).not.toContain("call_");
   });
 });

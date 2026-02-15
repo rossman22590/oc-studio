@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Play, Trash2 } from "lucide-react";
+import { Bell, CalendarDays, ListChecks, Play, Sun, Trash2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import type { AgentState } from "@/features/agents/state/store";
+import type { CronCreateDraft, CronCreateTemplateId } from "@/lib/cron/createPayloadBuilder";
 import { formatCronPayload, formatCronSchedule, type CronJobSummary } from "@/lib/cron/types";
 import type { GatewayClient } from "@/lib/gateway/GatewayClient";
 import type { AgentHeartbeatSummary } from "@/lib/gateway/agentConfig";
@@ -47,7 +48,7 @@ const AgentInspectHeader = ({
         <div className="console-title text-2xl leading-none text-foreground">{title}</div>
       </div>
       <button
-        className="rounded-md border border-border/80 bg-card/70 px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground transition hover:border-border hover:bg-muted/65"
+        className="rounded-md border border-border/80 bg-surface-3 px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground transition hover:border-border hover:bg-surface-2"
         type="button"
         data-testid={closeTestId}
         disabled={closeDisabled}
@@ -63,6 +64,7 @@ type AgentSettingsPanelProps = {
   agent: AgentState;
   onClose: () => void;
   onRename: (value: string) => Promise<boolean>;
+  onUpdateExecutionRole?: (role: "conservative" | "collaborative" | "autonomous") => Promise<void> | void;
   onNewSession: () => Promise<void> | void;
   onDelete: () => void;
   canDelete?: boolean;
@@ -75,6 +77,8 @@ type AgentSettingsPanelProps = {
   cronDeleteBusyJobId: string | null;
   onRunCronJob: (jobId: string) => Promise<void> | void;
   onDeleteCronJob: (jobId: string) => Promise<void> | void;
+  cronCreateBusy?: boolean;
+  onCreateCronJob?: (draft: CronCreateDraft) => Promise<void> | void;
   heartbeats?: AgentHeartbeatSummary[];
   heartbeatLoading?: boolean;
   heartbeatError?: string | null;
@@ -93,10 +97,165 @@ const formatHeartbeatTarget = (heartbeat: AgentHeartbeatSummary) =>
 const formatHeartbeatSource = (heartbeat: AgentHeartbeatSummary) =>
   heartbeat.source === "override" ? "Override" : "Inherited";
 
+const formatCronStateLine = (job: CronJobSummary): string | null => {
+  if (typeof job.state.runningAtMs === "number" && Number.isFinite(job.state.runningAtMs)) {
+    return "Running now";
+  }
+  if (typeof job.state.nextRunAtMs === "number" && Number.isFinite(job.state.nextRunAtMs)) {
+    return `Next: ${new Date(job.state.nextRunAtMs).toLocaleString()}`;
+  }
+  if (typeof job.state.lastRunAtMs === "number" && Number.isFinite(job.state.lastRunAtMs)) {
+    const status = job.state.lastStatus ? `${job.state.lastStatus} ` : "";
+    return `Last: ${status}${new Date(job.state.lastRunAtMs).toLocaleString()}`.trim();
+  }
+  return null;
+};
+
+const getFirstLinePreview = (value: string, maxChars: number): string => {
+  const firstLine =
+    value
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) ?? "";
+  if (!firstLine) return "";
+  if (firstLine.length <= maxChars) return firstLine;
+  return `${firstLine.slice(0, maxChars)}...`;
+};
+
+type CronTemplateOption = {
+  id: CronCreateTemplateId;
+  title: string;
+  description: string;
+  icon: typeof Sun;
+  accent: string;
+};
+
+const CRON_TEMPLATE_OPTIONS: CronTemplateOption[] = [
+  {
+    id: "morning-brief",
+    title: "Morning Brief",
+    description: "Daily status summary with overnight updates.",
+    icon: Sun,
+    accent: "border-amber-400/40 bg-amber-500/10",
+  },
+  {
+    id: "reminder",
+    title: "Reminder",
+    description: "A timed nudge for a specific event or task.",
+    icon: Bell,
+    accent: "border-cyan-400/40 bg-cyan-500/10",
+  },
+  {
+    id: "weekly-review",
+    title: "Weekly Review",
+    description: "Recurring synthesis across a longer time window.",
+    icon: CalendarDays,
+    accent: "border-emerald-400/40 bg-emerald-500/10",
+  },
+  {
+    id: "inbox-triage",
+    title: "Inbox Triage",
+    description: "Regular sorting and summarizing of incoming updates.",
+    icon: ListChecks,
+    accent: "border-orange-400/40 bg-orange-500/10",
+  },
+  {
+    id: "custom",
+    title: "Custom",
+    description: "Start from a blank flow and choose each setting.",
+    icon: ListChecks,
+    accent: "border-violet-400/40 bg-violet-500/10",
+  },
+];
+
+const resolveLocalTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+
+const createInitialCronDraft = (): CronCreateDraft => ({
+  templateId: "morning-brief",
+  name: "",
+  taskText: "",
+  scheduleKind: "every",
+  everyAmount: 30,
+  everyUnit: "minutes",
+  everyAtTime: "09:00",
+  everyTimeZone: resolveLocalTimeZone(),
+  deliveryMode: "none",
+  deliveryChannel: "last",
+});
+
+const applyTemplateDefaults = (templateId: CronCreateTemplateId, current: CronCreateDraft): CronCreateDraft => {
+  const nextTimeZone = (current.everyTimeZone ?? "").trim() || resolveLocalTimeZone();
+  const base = {
+    ...createInitialCronDraft(),
+    deliveryMode: current.deliveryMode ?? "none",
+    deliveryChannel: current.deliveryChannel || "last",
+    deliveryTo: current.deliveryTo,
+    advancedSessionTarget: current.advancedSessionTarget,
+    advancedWakeMode: current.advancedWakeMode,
+    everyTimeZone: nextTimeZone,
+  } satisfies CronCreateDraft;
+
+  if (templateId === "morning-brief") {
+    return {
+      ...base,
+      templateId,
+      name: "Morning brief",
+      taskText: "Summarize overnight updates and priorities.",
+      scheduleKind: "every",
+      everyAmount: 1,
+      everyUnit: "days",
+      everyAtTime: "07:00",
+    };
+  }
+  if (templateId === "reminder") {
+    return {
+      ...base,
+      templateId,
+      name: "Reminder",
+      taskText: "Reminder: follow up on today's priority task.",
+      scheduleKind: "at",
+      scheduleAt: "",
+    };
+  }
+  if (templateId === "weekly-review") {
+    return {
+      ...base,
+      templateId,
+      name: "Weekly review",
+      taskText: "Summarize wins, blockers, and next-week priorities.",
+      scheduleKind: "every",
+      everyAmount: 7,
+      everyUnit: "days",
+      everyAtTime: "09:00",
+    };
+  }
+  if (templateId === "inbox-triage") {
+    return {
+      ...base,
+      templateId,
+      name: "Inbox triage",
+      taskText: "Triage unread updates and surface the top actions.",
+      scheduleKind: "every",
+      everyAmount: 30,
+      everyUnit: "minutes",
+    };
+  }
+  return {
+    ...base,
+    templateId: "custom",
+    name: "",
+    taskText: "",
+    scheduleKind: "every",
+    everyAmount: 30,
+    everyUnit: "minutes",
+  };
+};
+
 export const AgentSettingsPanel = ({
   agent,
   onClose,
   onRename,
+  onUpdateExecutionRole = () => {},
   onNewSession,
   onDelete,
   canDelete = true,
@@ -109,6 +268,8 @@ export const AgentSettingsPanel = ({
   cronDeleteBusyJobId,
   onRunCronJob,
   onDeleteCronJob,
+  cronCreateBusy = false,
+  onCreateCronJob = () => {},
   heartbeats = [],
   heartbeatLoading = false,
   heartbeatError = null,
@@ -121,11 +282,37 @@ export const AgentSettingsPanel = ({
   const [renameSaving, setRenameSaving] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
   const [sessionBusy, setSessionBusy] = useState(false);
+  const [executionRoleDraft, setExecutionRoleDraft] = useState<
+    "conservative" | "collaborative" | "autonomous"
+  >("collaborative");
+  const [executionRoleSaving, setExecutionRoleSaving] = useState(false);
+  const [executionRoleError, setExecutionRoleError] = useState<string | null>(null);
+  const [expandedCronJobIds, setExpandedCronJobIds] = useState<Set<string>>(() => new Set());
+  const [cronCreateOpen, setCronCreateOpen] = useState(false);
+  const [cronCreateStep, setCronCreateStep] = useState(0);
+  const [cronCreateError, setCronCreateError] = useState<string | null>(null);
+  const [cronDraft, setCronDraft] = useState<CronCreateDraft>(createInitialCronDraft);
 
   useEffect(() => {
     setNameDraft(agent.name);
     setRenameError(null);
   }, [agent.agentId, agent.name]);
+
+  const resolvedExecutionRole: "conservative" | "collaborative" | "autonomous" = useMemo(() => {
+    if (agent.sessionExecSecurity === "full" && agent.sessionExecAsk === "off") {
+      return "autonomous";
+    }
+    if (agent.sessionExecSecurity === "allowlist" || agent.sessionExecAsk === "always" || agent.sessionExecAsk === "on-miss") {
+      return "collaborative";
+    }
+    return "conservative";
+  }, [agent.sessionExecAsk, agent.sessionExecSecurity]);
+
+  useEffect(() => {
+    setExecutionRoleDraft(resolvedExecutionRole);
+    setExecutionRoleError(null);
+    setExecutionRoleSaving(false);
+  }, [agent.agentId, resolvedExecutionRole]);
 
   const handleRename = async () => {
     const next = nameDraft.trim();
@@ -160,6 +347,110 @@ export const AgentSettingsPanel = ({
     }
   };
 
+  const handleUpdateExecutionRole = async () => {
+    if (executionRoleSaving) return;
+    if (executionRoleDraft === resolvedExecutionRole) {
+      setExecutionRoleError(null);
+      return;
+    }
+    setExecutionRoleSaving(true);
+    setExecutionRoleError(null);
+    try {
+      await onUpdateExecutionRole(executionRoleDraft);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to update execution role.";
+      setExecutionRoleError(message);
+    } finally {
+      setExecutionRoleSaving(false);
+    }
+  };
+
+  const openCronCreate = () => {
+    setCronCreateOpen(true);
+    setCronCreateStep(0);
+    setCronCreateError(null);
+    setCronDraft(createInitialCronDraft());
+  };
+
+  const closeCronCreate = () => {
+    setCronCreateOpen(false);
+    setCronCreateStep(0);
+    setCronCreateError(null);
+    setCronDraft(createInitialCronDraft());
+  };
+
+  const updateCronDraft = (patch: Partial<CronCreateDraft>) => {
+    setCronDraft((prev) => ({ ...prev, ...patch }));
+  };
+
+  const selectCronTemplate = (templateId: CronCreateTemplateId) => {
+    setCronDraft((prev) => applyTemplateDefaults(templateId, prev));
+  };
+
+  const canMoveToScheduleStep = cronDraft.name.trim().length > 0 && cronDraft.taskText.trim().length > 0;
+  const canMoveToReviewStep =
+    cronDraft.scheduleKind === "every"
+      ? Number.isFinite(cronDraft.everyAmount) &&
+        (cronDraft.everyAmount ?? 0) > 0 &&
+        (cronDraft.everyUnit !== "days" ||
+          ((cronDraft.everyAtTime ?? "").trim().length > 0 &&
+            (cronDraft.everyTimeZone ?? "").trim().length > 0))
+      : (cronDraft.scheduleAt ?? "").trim().length > 0;
+  const canSubmitCronCreate = canMoveToScheduleStep && canMoveToReviewStep;
+
+  const submitCronCreate = async () => {
+    if (cronCreateBusy || !canSubmitCronCreate) {
+      return;
+    }
+    setCronCreateError(null);
+    const payload: CronCreateDraft = {
+      templateId: cronDraft.templateId,
+      name: cronDraft.name.trim(),
+      taskText: cronDraft.taskText.trim(),
+      scheduleKind: cronDraft.scheduleKind,
+      ...(typeof cronDraft.everyAmount === "number" ? { everyAmount: cronDraft.everyAmount } : {}),
+      ...(cronDraft.everyUnit ? { everyUnit: cronDraft.everyUnit } : {}),
+      ...(cronDraft.everyUnit === "days" && cronDraft.everyAtTime
+        ? { everyAtTime: cronDraft.everyAtTime }
+        : {}),
+      ...(cronDraft.everyUnit === "days" && cronDraft.everyTimeZone
+        ? { everyTimeZone: cronDraft.everyTimeZone }
+        : {}),
+      ...(cronDraft.scheduleAt ? { scheduleAt: cronDraft.scheduleAt } : {}),
+      ...(cronDraft.deliveryMode ? { deliveryMode: cronDraft.deliveryMode } : {}),
+      ...(cronDraft.deliveryChannel ? { deliveryChannel: cronDraft.deliveryChannel } : {}),
+      ...(cronDraft.deliveryTo ? { deliveryTo: cronDraft.deliveryTo } : {}),
+      ...(cronDraft.advancedSessionTarget
+        ? { advancedSessionTarget: cronDraft.advancedSessionTarget }
+        : {}),
+      ...(cronDraft.advancedWakeMode ? { advancedWakeMode: cronDraft.advancedWakeMode } : {}),
+    };
+    try {
+      await onCreateCronJob(payload);
+      closeCronCreate();
+    } catch (err) {
+      setCronCreateError(err instanceof Error ? err.message : "Failed to create cron job.");
+    }
+  };
+
+  const moveCronCreateBack = () => {
+    setCronCreateStep((prev) => Math.max(0, prev - 1));
+  };
+
+  const moveCronCreateNext = () => {
+    if (cronCreateStep === 0) {
+      setCronCreateStep(1);
+      return;
+    }
+    if (cronCreateStep === 1 && canMoveToScheduleStep) {
+      setCronCreateStep(2);
+      return;
+    }
+    if (cronCreateStep === 2 && canMoveToReviewStep) {
+      setCronCreateStep(3);
+    }
+  };
+
   return (
     <div
       className="agent-inspect-panel"
@@ -173,19 +464,16 @@ export const AgentSettingsPanel = ({
         closeTestId="agent-settings-close"
       />
 
-      <div className="flex flex-col gap-4 p-4">
+      <div className="flex flex-col gap-0 px-4 pb-4">
         <section
-          className="rounded-md border border-border/80 bg-card/70 p-4"
+          className="border-t border-border/60 py-4 first:border-t-0"
           data-testid="agent-settings-identity"
         >
-          <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            Identity
-          </div>
-          <label className="mt-3 flex flex-col gap-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+          <label className="flex flex-col gap-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
             <span>Agent name</span>
             <input
               aria-label="Agent name"
-              className="h-10 rounded-md border border-border bg-card/75 px-3 text-xs font-semibold text-foreground outline-none"
+              className="h-10 rounded-md border border-border bg-surface-3 px-3 text-xs font-semibold text-foreground outline-none"
               value={nameDraft}
               disabled={renameSaving}
               onChange={(event) => setNameDraft(event.target.value)}
@@ -198,7 +486,7 @@ export const AgentSettingsPanel = ({
           ) : null}
           <div className="mt-3 flex justify-end">
             <button
-              className="rounded-md border border-transparent bg-primary/90 px-4 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-primary-foreground disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground"
+              className="rounded-md border border-transparent bg-primary px-4 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-primary-foreground transition hover:brightness-105 disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground"
               type="button"
               onClick={() => {
                 void handleRename();
@@ -211,48 +499,87 @@ export const AgentSettingsPanel = ({
         </section>
 
         <section
-          className="rounded-md border border-border/80 bg-card/70 p-4"
-          data-testid="agent-settings-display"
+          className="border-t border-border/60 py-4 first:border-t-0"
+          data-testid="agent-settings-execution"
         >
           <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            Display
+            Execution role
           </div>
-          <div className="mt-3 grid gap-3 md:grid-cols-2">
-            <label className="flex items-center justify-between gap-3 rounded-md border border-border/80 bg-card/75 px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-              <span>Show tool calls</span>
-              <input
-                aria-label="Show tool calls"
-                type="checkbox"
-                className="h-4 w-4 rounded border-input text-foreground"
-                checked={agent.toolCallingEnabled}
-                onChange={(event) => onToolCallingToggle(event.target.checked)}
-              />
-            </label>
-            <label className="flex items-center justify-between gap-3 rounded-md border border-border/80 bg-card/75 px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-              <span>Show thinking</span>
-              <input
-                aria-label="Show thinking"
-                type="checkbox"
-                className="h-4 w-4 rounded border-input text-foreground"
-                checked={agent.showThinkingTraces}
-                onChange={(event) => onThinkingTracesToggle(event.target.checked)}
-              />
-            </label>
+          <div className="mt-3 text-[11px] text-muted-foreground">
+            Controls whether this agent can run commands without approval prompts.
+          </div>
+          <div className="mt-3 grid gap-2">
+            {(
+              [
+                {
+                  id: "conservative" as const,
+                  title: "Conservative",
+                  description: "No command execution.",
+                },
+                {
+                  id: "collaborative" as const,
+                  title: "Collaborative",
+                  description: "Commands require approval.",
+                },
+                {
+                  id: "autonomous" as const,
+                  title: "Autonomous",
+                  description: "Commands run automatically.",
+                },
+              ] as const
+            ).map((option) => {
+              const selected = executionRoleDraft === option.id;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={`rounded-md border px-3 py-2 text-left transition ${
+                    selected
+                      ? "border-primary/60 bg-primary/10"
+                      : "border-border/80 bg-surface-3 hover:border-border hover:bg-surface-2"
+                  }`}
+                  disabled={executionRoleSaving}
+                  onClick={() => setExecutionRoleDraft(option.id)}
+                >
+                  <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground">
+                    {option.title}
+                  </div>
+                  <div className="mt-1 text-[11px] text-muted-foreground">{option.description}</div>
+                </button>
+              );
+            })}
+          </div>
+          {executionRoleError ? (
+            <div className="mt-3 rounded-md border border-destructive bg-destructive px-3 py-2 text-xs text-destructive-foreground">
+              {executionRoleError}
+            </div>
+          ) : null}
+          <div className="mt-3 flex justify-end">
+            <button
+              className="rounded-md border border-transparent bg-primary px-4 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-primary-foreground transition hover:brightness-105 disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground"
+              type="button"
+              onClick={() => {
+                void handleUpdateExecutionRole();
+              }}
+              disabled={executionRoleSaving || executionRoleDraft === resolvedExecutionRole}
+            >
+              {executionRoleSaving ? "Saving..." : "Update Role"}
+            </button>
           </div>
         </section>
 
         <section
-          className="rounded-md border border-border/80 bg-card/70 p-4"
+          className="border-t border-border/60 py-4 first:border-t-0"
           data-testid="agent-settings-session"
         >
           <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
             Session
           </div>
           <div className="mt-3 text-[11px] text-muted-foreground">
-            Start this agent in a fresh session and clear the visible transcript in Studio.
+            Starts a new session and clears the visible transcript in Studio.
           </div>
           <button
-            className="mt-3 w-full rounded-md border border-border/80 bg-card/75 px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground transition hover:border-border hover:bg-muted/70 disabled:cursor-not-allowed disabled:opacity-70"
+            className="mt-3 w-full rounded-md border border-border/80 bg-surface-3 px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground transition hover:border-border hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-70"
             type="button"
             onClick={() => {
               void handleNewSession();
@@ -264,11 +591,22 @@ export const AgentSettingsPanel = ({
         </section>
 
         <section
-          className="rounded-md border border-border/80 bg-card/70 p-4"
+          className="border-t border-border/60 py-4 first:border-t-0"
           data-testid="agent-settings-cron"
         >
-          <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            Cron jobs
+          <div className="flex items-center justify-between gap-2">
+            <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              Cron jobs
+            </div>
+            {!cronLoading && !cronError && cronJobs.length > 0 ? (
+              <button
+                className="rounded-md border border-border/80 bg-surface-3 px-2.5 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground transition hover:border-border hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
+                type="button"
+                onClick={openCronCreate}
+              >
+                Create
+              </button>
+            ) : null}
           </div>
           {cronLoading ? (
             <div className="mt-3 text-[11px] text-muted-foreground">Loading cron jobs...</div>
@@ -279,9 +617,18 @@ export const AgentSettingsPanel = ({
             </div>
           ) : null}
           {!cronLoading && !cronError && cronJobs.length === 0 ? (
-            <div className="mt-3 text-[11px] text-muted-foreground">
-              No cron jobs for this agent.
-            </div>
+            <>
+              <div className="mt-3 text-[11px] text-muted-foreground">
+                No cron jobs for this agent.
+              </div>
+              <button
+                className="mt-3 w-full rounded-md border border-border/80 bg-surface-3 px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground transition hover:border-border hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
+                type="button"
+                onClick={openCronCreate}
+              >
+                Create
+              </button>
+            </>
           ) : null}
           {!cronLoading && !cronError && cronJobs.length > 0 ? (
             <div className="mt-3 flex flex-col gap-2">
@@ -289,25 +636,75 @@ export const AgentSettingsPanel = ({
                 const runBusy = cronRunBusyJobId === job.id;
                 const deleteBusy = cronDeleteBusyJobId === job.id;
                 const busy = runBusy || deleteBusy;
+                const scheduleText = formatCronSchedule(job.schedule);
+                const payloadText = formatCronPayload(job.payload).trim();
+                const payloadPreview = getFirstLinePreview(payloadText, 160);
+                const payloadExpandable =
+                  payloadText.length > payloadPreview.length || payloadText.split("\n").length > 1;
+                const expanded = expandedCronJobIds.has(job.id);
+                const stateLine = formatCronStateLine(job);
                 return (
                   <div
                     key={job.id}
-                    className="group/cron flex items-start justify-between gap-2 rounded-md border border-border/80 bg-card/75 px-3 py-2"
+                    className="group/cron flex items-start justify-between gap-2 rounded-md border border-border/80 bg-surface-2 px-3 py-2"
                   >
                     <div className="min-w-0 flex-1">
-                      <div className="truncate font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground">
-                        {job.name}
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <div className="min-w-0 flex-1 truncate font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground">
+                          {job.name}
+                        </div>
+                        {!job.enabled ? (
+                          <div className="shrink-0 rounded-full border border-border/80 bg-muted/40 px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                            Disabled
+                          </div>
+                        ) : null}
                       </div>
-                      <div className="truncate text-[11px] text-muted-foreground">
-                        {formatCronSchedule(job.schedule)}
+                      <div className="mt-1 text-[11px] text-muted-foreground">
+                        <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                          Schedule
+                        </span>
+                        <div className="break-words">{scheduleText}</div>
                       </div>
-                      <div className="truncate text-[11px] text-muted-foreground">
-                        {formatCronPayload(job.payload)}
-                      </div>
+                      {stateLine ? (
+                        <div className="mt-1 break-words text-[11px] text-muted-foreground">
+                          {stateLine}
+                        </div>
+                      ) : null}
+                      {payloadText ? (
+                        <div className="mt-1 text-[11px] text-muted-foreground">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                              Task
+                            </span>
+                            {payloadExpandable ? (
+                              <button
+                                className="shrink-0 rounded-md border border-border/80 bg-surface-3 px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground transition hover:border-border hover:bg-surface-2"
+                                type="button"
+                                onClick={() => {
+                                  setExpandedCronJobIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(job.id)) {
+                                      next.delete(job.id);
+                                    } else {
+                                      next.add(job.id);
+                                    }
+                                    return next;
+                                  });
+                                }}
+                              >
+                                {expanded ? "Less" : "More"}
+                              </button>
+                            ) : null}
+                          </div>
+                          <div className="mt-0.5 whitespace-pre-wrap break-words" title={payloadText}>
+                            {expanded ? payloadText : payloadPreview || payloadText}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                     <div className="flex items-center gap-1 opacity-0 transition group-focus-within/cron:opacity-100 group-hover/cron:opacity-100">
                       <button
-                        className="flex h-7 w-7 items-center justify-center rounded-md border border-border/80 bg-card/70 text-muted-foreground transition hover:border-border hover:bg-muted/65 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="flex h-7 w-7 items-center justify-center rounded-md border border-border/80 bg-surface-3 text-muted-foreground transition hover:border-border hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
                         type="button"
                         aria-label={`Run cron job ${job.name} now`}
                         onClick={() => {
@@ -337,7 +734,7 @@ export const AgentSettingsPanel = ({
         </section>
 
         <section
-          className="rounded-md border border-border/80 bg-card/70 p-4"
+          className="border-t border-border/60 py-4 first:border-t-0"
           data-testid="agent-settings-heartbeat"
         >
           <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
@@ -366,7 +763,7 @@ export const AgentSettingsPanel = ({
                 return (
                   <div
                     key={heartbeat.id}
-                    className="group/heartbeat flex items-start justify-between gap-2 rounded-md border border-border/80 bg-card/75 px-3 py-2"
+                    className="group/heartbeat flex items-start justify-between gap-2 rounded-md border border-border/80 bg-surface-2 px-3 py-2"
                   >
                     <div className="min-w-0 flex-1">
                       <div className="truncate font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground">
@@ -384,7 +781,7 @@ export const AgentSettingsPanel = ({
                     </div>
                     <div className="flex items-center gap-1 opacity-0 transition group-focus-within/heartbeat:opacity-100 group-hover/heartbeat:opacity-100">
                       <button
-                        className="flex h-7 w-7 items-center justify-center rounded-md border border-border/80 bg-card/70 text-muted-foreground transition hover:border-border hover:bg-muted/65 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="flex h-7 w-7 items-center justify-center rounded-md border border-border/80 bg-surface-3 text-muted-foreground transition hover:border-border hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
                         type="button"
                         aria-label={`Run heartbeat for ${heartbeat.agentId} now`}
                         onClick={() => {
@@ -413,8 +810,39 @@ export const AgentSettingsPanel = ({
           ) : null}
         </section>
 
+        <section
+          className="border-t border-border/60 py-4 first:border-t-0"
+          data-testid="agent-settings-display"
+        >
+          <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            Display
+          </div>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <label className="flex items-center justify-between gap-3 rounded-md border border-border/80 bg-surface-3 px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+              <span>Show tool calls</span>
+              <input
+                aria-label="Show tool calls"
+                type="checkbox"
+                className="h-4 w-4 rounded border-input text-foreground"
+                checked={agent.toolCallingEnabled}
+                onChange={(event) => onToolCallingToggle(event.target.checked)}
+              />
+            </label>
+            <label className="flex items-center justify-between gap-3 rounded-md border border-border/80 bg-surface-3 px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+              <span>Show thinking</span>
+              <input
+                aria-label="Show thinking"
+                type="checkbox"
+                className="h-4 w-4 rounded border-input text-foreground"
+                checked={agent.showThinkingTraces}
+                onChange={(event) => onThinkingTracesToggle(event.target.checked)}
+              />
+            </label>
+          </div>
+        </section>
+
         {canDelete ? (
-          <section className="rounded-md border border-destructive/30 bg-destructive/4 p-4">
+          <section className="border-t border-destructive/35 py-4 first:border-t-0">
             <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-destructive">
               Delete agent
             </div>
@@ -422,7 +850,7 @@ export const AgentSettingsPanel = ({
               Removes the agent from the gateway config and deletes its cron jobs.
             </div>
             <button
-              className="mt-3 w-full rounded-md border border-destructive/50 bg-transparent px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-destructive shadow-sm transition hover:bg-destructive/10"
+              className="mt-3 w-full rounded-md border border-destructive/50 bg-transparent px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-destructive transition hover:bg-destructive/10"
               type="button"
               onClick={onDelete}
             >
@@ -430,7 +858,7 @@ export const AgentSettingsPanel = ({
             </button>
           </section>
         ) : (
-          <section className="rounded-md border border-border/80 bg-card/70 p-4">
+          <section className="border-t border-border/60 py-4 first:border-t-0">
             <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
               System agent
             </div>
@@ -440,6 +868,261 @@ export const AgentSettingsPanel = ({
           </section>
         )}
       </div>
+      {cronCreateOpen ? (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-background/80 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Create cron job"
+          onClick={closeCronCreate}
+        >
+          <div
+            className="w-full max-w-2xl rounded-xl border border-border bg-card"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-border/80 px-4 py-3">
+              <div className="min-w-0">
+                <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  Cron job composer
+                </div>
+                <div className="mt-1 text-base font-semibold text-foreground">Create cron job</div>
+              </div>
+              <button
+                type="button"
+                className="inline-flex h-9 items-center justify-center rounded-md border border-border/80 bg-surface-3 px-3 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground transition hover:border-border hover:bg-surface-2"
+                onClick={closeCronCreate}
+              >
+                Close
+              </button>
+            </div>
+            <div className="space-y-4 px-4 py-4">
+              {cronCreateError ? (
+                <div className="rounded-md border border-destructive bg-destructive px-3 py-2 text-xs text-destructive-foreground">
+                  {cronCreateError}
+                </div>
+              ) : null}
+              {cronCreateStep === 0 ? (
+                <div className="space-y-3">
+                  <div className="text-sm text-muted-foreground">
+                    Choose a starter template to prefill your cron job.
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {CRON_TEMPLATE_OPTIONS.map((option) => {
+                      const active = option.id === cronDraft.templateId;
+                      const Icon = option.icon;
+                      return (
+                        <button
+                          key={option.id}
+                          type="button"
+                          aria-label={option.title}
+                          className={`rounded-md border px-3 py-3 text-left transition ${
+                            active
+                              ? `${option.accent} border-border`
+                              : "border-border/80 bg-surface-2 hover:border-border hover:bg-surface-3"
+                          }`}
+                          onClick={() => selectCronTemplate(option.id)}
+                        >
+                          <div className="flex items-center gap-2">
+                            <Icon className="h-4 w-4 text-foreground" />
+                            <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground">
+                              {option.title}
+                            </div>
+                          </div>
+                          <div className="mt-1 text-[11px] text-muted-foreground">{option.description}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+              {cronCreateStep === 1 ? (
+                <div className="space-y-3">
+                  <div className="text-sm text-muted-foreground">
+                    Define what this cron job should do.
+                  </div>
+                  <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
+                    <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em]">
+                      Job name
+                    </span>
+                    <input
+                      aria-label="Job name"
+                      className="h-10 rounded-md border border-border bg-surface-3 px-3 text-sm text-foreground outline-none"
+                      value={cronDraft.name}
+                      onChange={(event) => updateCronDraft({ name: event.target.value })}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
+                    <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em]">
+                      Task
+                    </span>
+                    <textarea
+                      aria-label="Task"
+                      className="min-h-28 rounded-md border border-border bg-surface-3 px-3 py-2 text-sm text-foreground outline-none"
+                      value={cronDraft.taskText}
+                      onChange={(event) => updateCronDraft({ taskText: event.target.value })}
+                    />
+                  </label>
+                </div>
+              ) : null}
+              {cronCreateStep === 2 ? (
+                <div className="space-y-3">
+                  <div className="text-sm text-muted-foreground">Choose when this should run.</div>
+                  <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
+                    <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em]">
+                      Schedule type
+                    </span>
+                    <select
+                      className="h-10 rounded-md border border-border bg-surface-3 px-3 text-sm text-foreground outline-none"
+                      value={cronDraft.scheduleKind}
+                      onChange={(event) =>
+                        updateCronDraft({ scheduleKind: event.target.value as CronCreateDraft["scheduleKind"] })
+                      }
+                    >
+                      <option value="every">Every</option>
+                      <option value="at">One time</option>
+                    </select>
+                  </label>
+                  {cronDraft.scheduleKind === "every" ? (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
+                        <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em]">
+                          Every
+                        </span>
+                        <input
+                          type="number"
+                          min={1}
+                          step={1}
+                          className="h-10 rounded-md border border-border bg-surface-3 px-3 text-sm text-foreground outline-none"
+                          value={String(cronDraft.everyAmount ?? 30)}
+                          onChange={(event) =>
+                            updateCronDraft({
+                              everyAmount: Number.parseInt(event.target.value, 10) || 0,
+                            })
+                          }
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
+                        <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em]">
+                          Unit
+                        </span>
+                        <select
+                          className="h-10 rounded-md border border-border bg-surface-3 px-3 text-sm text-foreground outline-none"
+                          value={cronDraft.everyUnit ?? "minutes"}
+                          onChange={(event) =>
+                            updateCronDraft({
+                              everyUnit: event.target.value as CronCreateDraft["everyUnit"],
+                            })
+                          }
+                        >
+                          <option value="minutes">Minutes</option>
+                          <option value="hours">Hours</option>
+                          <option value="days">Days</option>
+                        </select>
+                      </label>
+                      {cronDraft.everyUnit === "days" ? (
+                        <>
+                          <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
+                            <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em]">
+                              Time of day
+                            </span>
+                            <input
+                              type="time"
+                              className="h-10 rounded-md border border-border bg-surface-3 px-3 text-sm text-foreground outline-none"
+                              value={cronDraft.everyAtTime ?? "09:00"}
+                              onChange={(event) => updateCronDraft({ everyAtTime: event.target.value })}
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
+                            <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em]">
+                              Timezone
+                            </span>
+                            <input
+                              className="h-10 rounded-md border border-border bg-surface-3 px-3 text-sm text-foreground outline-none"
+                              value={cronDraft.everyTimeZone ?? resolveLocalTimeZone()}
+                              onChange={(event) => updateCronDraft({ everyTimeZone: event.target.value })}
+                            />
+                          </label>
+                        </>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {cronDraft.scheduleKind === "at" ? (
+                    <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
+                      <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em]">
+                        Run at
+                      </span>
+                      <input
+                        type="datetime-local"
+                        className="h-10 rounded-md border border-border bg-surface-3 px-3 text-sm text-foreground outline-none"
+                        value={cronDraft.scheduleAt ?? ""}
+                        onChange={(event) => updateCronDraft({ scheduleAt: event.target.value })}
+                      />
+                    </label>
+                  ) : null}
+                </div>
+              ) : null}
+              {cronCreateStep === 3 ? (
+                <div className="space-y-3 text-sm text-muted-foreground">
+                  <div>Review your cron job configuration before creating it.</div>
+                  <div className="rounded-md border border-border/80 bg-surface-2 px-3 py-2">
+                    <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground">
+                      {cronDraft.name || "Untitled cron job"}
+                    </div>
+                    <div className="mt-1 text-[11px]">{cronDraft.taskText || "No task provided."}</div>
+                    <div className="mt-2 text-[11px]">
+                      Schedule:{" "}
+                      {cronDraft.scheduleKind === "every"
+                        ? `Every ${cronDraft.everyAmount ?? 0} ${cronDraft.everyUnit ?? "minutes"}${
+                            cronDraft.everyUnit === "days"
+                              ? ` at ${cronDraft.everyAtTime ?? ""} (${cronDraft.everyTimeZone ?? resolveLocalTimeZone()})`
+                              : ""
+                          }`
+                        : `At ${cronDraft.scheduleAt ?? ""}`}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <div className="flex items-center justify-between gap-2 border-t border-border/80 px-4 py-3">
+              <div className="text-[11px] text-muted-foreground">Step {cronCreateStep + 1} of 4</div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="rounded-md border border-border/80 bg-surface-3 px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground transition hover:border-border hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={moveCronCreateBack}
+                  disabled={cronCreateStep === 0 || cronCreateBusy}
+                >
+                  Back
+                </button>
+                {cronCreateStep < 3 ? (
+                  <button
+                    type="button"
+                    className="rounded-md border border-border/80 bg-surface-3 px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground transition hover:border-border hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={moveCronCreateNext}
+                    disabled={
+                      cronCreateBusy ||
+                      (cronCreateStep === 1 && !canMoveToScheduleStep) ||
+                      (cronCreateStep === 2 && !canMoveToReviewStep)
+                    }
+                  >
+                    Next
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="rounded-md border border-transparent bg-primary px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-primary-foreground transition hover:brightness-105 disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground"
+                  onClick={() => {
+                    void submitCronCreate();
+                  }}
+                  disabled={cronCreateBusy || cronCreateStep !== 3 || !canSubmitCronCreate}
+                >
+                  Create cron job
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 };
@@ -463,6 +1146,7 @@ type UseAgentFilesEditorResult = {
   setAgentFileContent: (value: string) => void;
   handleAgentFileTabChange: (nextTab: AgentFileName) => Promise<void>;
   saveAgentFiles: () => Promise<boolean>;
+  reloadAgentFiles: () => Promise<void>;
 };
 
 const useAgentFilesEditor = (params: {
@@ -628,6 +1312,7 @@ const useAgentFilesEditor = (params: {
     setAgentFileContent,
     handleAgentFileTabChange,
     saveAgentFiles,
+    reloadAgentFiles: loadAgentFiles,
   };
 };
 
@@ -871,6 +1556,7 @@ export const AgentBrainPanel = ({
     setAgentFileContent,
     handleAgentFileTabChange,
     saveAgentFiles,
+    reloadAgentFiles,
   } = useAgentFilesEditor({ client, agentId: selectedAgent?.agentId ?? null });
   const [panelMode, setPanelMode] = useState<"brain" | "workspace">("brain");
   const workspace = useAgentWorkspaceBrowser({
@@ -936,6 +1622,17 @@ export const AgentBrainPanel = ({
           </div>
 
           <div className="mt-3 flex items-center justify-end gap-1">
+            <button
+              type="button"
+              className="rounded-md border border-border/70 bg-surface-3 px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground transition hover:bg-surface-2 disabled:opacity-50"
+              disabled={agentFilesLoading || agentFilesSaving || agentFilesDirty}
+              onClick={() => {
+                void reloadAgentFiles();
+              }}
+              title={agentFilesDirty ? "Save changes before reloading." : "Reload from gateway"}
+            >
+              Reload
+            </button>
             <button
               type="button"
               className={`rounded-md border px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] transition ${

@@ -1,6 +1,6 @@
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -15,6 +15,12 @@ const setupAndImportHook = async (gatewayUrl: string | null) => {
   vi.resetModules();
   vi.spyOn(console, "info").mockImplementation(() => {});
 
+  const captured: { url: string | null; token: unknown; authScopeKey: unknown } = {
+    url: null,
+    token: null,
+    authScopeKey: null,
+  };
+
   vi.doMock("../../src/lib/gateway/openclaw/GatewayBrowserClient", () => {
     class GatewayBrowserClient {
       connected = false;
@@ -26,6 +32,9 @@ const setupAndImportHook = async (gatewayUrl: string | null) => {
       };
 
       constructor(opts: Record<string, unknown>) {
+        captured.url = typeof opts.url === "string" ? opts.url : null;
+        captured.token = "token" in opts ? opts.token : null;
+        captured.authScopeKey = "authScopeKey" in opts ? opts.authScopeKey : null;
         this.opts = {
           onHello: typeof opts.onHello === "function" ? (opts.onHello as (hello: unknown) => void) : undefined,
           onEvent: typeof opts.onEvent === "function" ? (opts.onEvent as (event: unknown) => void) : undefined,
@@ -55,11 +64,20 @@ const setupAndImportHook = async (gatewayUrl: string | null) => {
   });
 
   const mod = await import("@/lib/gateway/GatewayClient");
-  return mod.useGatewayConnection as (settingsCoordinator: {
-    loadSettings: () => Promise<unknown>;
-    schedulePatch: (patch: unknown) => void;
-    flushPending: () => Promise<void>;
-  }) => { gatewayUrl: string };
+  return {
+    useGatewayConnection: mod.useGatewayConnection as (settingsCoordinator: {
+      loadSettings: () => Promise<unknown>;
+      loadSettingsEnvelope?: () => Promise<unknown>;
+      schedulePatch: (patch: unknown) => void;
+      flushPending: () => Promise<void>;
+    }) => {
+      gatewayUrl: string;
+      token: string;
+      localGatewayDefaults: { url: string; token: string } | null;
+      useLocalGatewayDefaults: () => void;
+    },
+    captured,
+  };
 };
 
 describe("useGatewayConnection", () => {
@@ -71,7 +89,7 @@ describe("useGatewayConnection", () => {
   });
 
   it("defaults_to_env_url_when_set", async () => {
-    const useGatewayConnection = await setupAndImportHook("ws://example.test:1234");
+    const { useGatewayConnection } = await setupAndImportHook("ws://example.test:1234");
     const coordinator = {
       loadSettings: async () => null,
       schedulePatch: () => {},
@@ -93,7 +111,7 @@ describe("useGatewayConnection", () => {
   });
 
   it("falls_back_to_local_default_when_env_unset", async () => {
-    const useGatewayConnection = await setupAndImportHook(null);
+    const { useGatewayConnection } = await setupAndImportHook(null);
     const coordinator = {
       loadSettings: async () => null,
       schedulePatch: () => {},
@@ -110,7 +128,91 @@ describe("useGatewayConnection", () => {
     render(createElement(Probe));
 
     await waitFor(() => {
-      expect(screen.getByTestId("gatewayUrl")).toHaveTextContent("ws://127.0.0.1:18789");
+      expect(screen.getByTestId("gatewayUrl")).toHaveTextContent("ws://localhost:18789");
     });
+  });
+
+  it("connects_via_studio_proxy_ws_and_does_not_pass_token", async () => {
+    const { useGatewayConnection, captured } = await setupAndImportHook(null);
+    const coordinator = {
+      loadSettings: async () => null,
+      schedulePatch: () => {},
+      flushPending: async () => {},
+    };
+
+    const Probe = () => {
+      useGatewayConnection(coordinator);
+      return createElement("div", null, "ok");
+    };
+
+    render(createElement(Probe));
+
+    await waitFor(() => {
+      expect(captured.url).toBe("ws://localhost:3000/api/gateway/ws");
+    });
+    expect(captured.token).toBe("");
+    expect(captured.authScopeKey).toBe("ws://localhost:18789");
+  });
+
+  it("applies_local_defaults_from_settings_envelope", async () => {
+    const { useGatewayConnection } = await setupAndImportHook(null);
+    const coordinator = {
+      loadSettings: async () => ({
+        version: 1,
+        gateway: null,
+        focused: {},
+        avatars: {},
+      }),
+      loadSettingsEnvelope: async () => ({
+        settings: {
+          version: 1,
+          gateway: { url: "wss://remote.example", token: "remote-token" },
+          focused: {},
+          avatars: {},
+        },
+        localGatewayDefaults: { url: "ws://localhost:18789", token: "local-token" },
+      }),
+      schedulePatch: () => {},
+      flushPending: async () => {},
+    };
+
+    const Probe = () => {
+      const state = useGatewayConnection(coordinator);
+      return createElement(
+        "div",
+        null,
+        createElement("div", { "data-testid": "gatewayUrl" }, state.gatewayUrl),
+        createElement("div", { "data-testid": "token" }, state.token),
+        createElement(
+          "div",
+          { "data-testid": "localDefaultsUrl" },
+          state.localGatewayDefaults?.url ?? ""
+        ),
+        createElement(
+          "button",
+          {
+            type: "button",
+            onClick: state.useLocalGatewayDefaults,
+            "data-testid": "useLocalDefaults",
+          },
+          "use"
+        )
+      );
+    };
+
+    render(createElement(Probe));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("gatewayUrl")).toHaveTextContent("wss://remote.example");
+    });
+    expect(screen.getByTestId("token")).toHaveTextContent("remote-token");
+    expect(screen.getByTestId("localDefaultsUrl")).toHaveTextContent("ws://localhost:18789");
+
+    fireEvent.click(screen.getByTestId("useLocalDefaults"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("gatewayUrl")).toHaveTextContent("ws://localhost:18789");
+    });
+    expect(screen.getByTestId("token")).toHaveTextContent("local-token");
   });
 });
