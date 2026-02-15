@@ -11,6 +11,7 @@ import { Features } from "./landing/Features";
 import { Showcase } from "./landing/Showcase";
 import { HowItWorks } from "./landing/HowItWorks";
 import { Testimonials } from "./landing/Testimonials";
+import { Pricing } from "./landing/Pricing";
 import { CTA } from "./landing/CTA";
 import { Footer } from "./landing/Footer";
 
@@ -65,6 +66,7 @@ export const LandingPage = () => {
       <Showcase />
       <HowItWorks />
       <Testimonials />
+      <Pricing />
       <CTA status={status} onConnectClick={handleConnectClick} />
       <Footer status={status} onConnectClick={handleConnectClick} />
 
