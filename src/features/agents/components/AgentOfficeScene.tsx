@@ -342,7 +342,7 @@ export const AgentOfficeScene = () => {
       {/* Top-left controls overlay */}
       <div className="absolute top-4 left-4 z-10 flex items-center gap-2">
         <Link
-          href="/"
+          href="/studio"
           className="flex items-center gap-2 rounded-md border border-input/90 bg-background/75 backdrop-blur-sm px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-foreground transition hover:border-ring hover:bg-card shadow-lg"
         >
           <Home className="h-4 w-4" />
