@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Monitor, MessageSquare, LayoutDashboard, FolderOpen } from "lucide-react";
+import { DemoOffice } from "./DemoOffice";
 
 /* ─── Per-tab visual mockups ──────────────────────────── */
 
@@ -266,16 +267,24 @@ export const Showcase = () => {
         <div className={`rounded-3xl border border-border/40 bg-card/30 backdrop-blur-sm overflow-hidden transition-all duration-700 delay-200 ${visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"}`}>
           <div className="grid md:grid-cols-2 gap-0">
             {/* Left: Visual mockup */}
-            <div className="relative bg-gradient-to-br from-primary/5 via-accent/3 to-transparent p-8 sm:p-12 flex items-center justify-center min-h-[360px] md:min-h-[440px] border-b md:border-b-0 md:border-r border-border/20">
-              {/* Window chrome */}
-              <div className="absolute top-5 left-6 flex items-center gap-1.5">
-                <div className="h-2.5 w-2.5 rounded-full bg-red-400/50" />
-                <div className="h-2.5 w-2.5 rounded-full bg-yellow-400/50" />
-                <div className="h-2.5 w-2.5 rounded-full bg-green-400/50" />
-              </div>
-              <div className="w-full transition-all duration-500">
-                <ActiveMockup />
-              </div>
+            <div className="relative bg-gradient-to-br from-primary/5 via-accent/3 to-transparent p-0 flex items-center justify-center min-h-[360px] md:min-h-[440px] border-b md:border-b-0 md:border-r border-border/20 overflow-hidden">
+              {activeTab === "office" ? (
+                <div className="w-full h-full">
+                  <DemoOffice />
+                </div>
+              ) : (
+                <>
+                  {/* Window chrome */}
+                  <div className="absolute top-5 left-6 z-10 flex items-center gap-1.5">
+                    <div className="h-2.5 w-2.5 rounded-full bg-red-400/50" />
+                    <div className="h-2.5 w-2.5 rounded-full bg-yellow-400/50" />
+                    <div className="h-2.5 w-2.5 rounded-full bg-green-400/50" />
+                  </div>
+                  <div className="w-full p-8 sm:p-12 transition-all duration-500">
+                    <ActiveMockup />
+                  </div>
+                </>
+              )}
             </div>
 
             {/* Right: Info */}

@@ -56,13 +56,23 @@ export const Navigation = ({ status, onConnectClick }: NavigationProps) => {
           {/* Actions */}
           <div className="flex items-center gap-2 sm:gap-3">
             {status === "connected" && (
-              <button
-                onClick={() => router.push("/studio")}
-                className="hidden sm:flex items-center gap-2 rounded-full bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition-all duration-300 hover:shadow-xl hover:shadow-primary/30 hover:scale-[1.02] active:scale-[0.98]"
-              >
-                <DoorOpen className="h-4 w-4" />
-                <span>Enter Studio</span>
-              </button>
+              <>
+                <a
+                  href="https://beta.machine.myapps.ai/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hidden sm:flex items-center gap-2 rounded-full border border-border/60 px-5 py-2 text-sm font-semibold text-foreground transition-all duration-300 hover:border-primary/40 hover:bg-primary/5 hover:scale-[1.02] active:scale-[0.98]"
+                >
+                  <span>Deploy Claw</span>
+                </a>
+                <button
+                  onClick={() => router.push("/studio")}
+                  className="hidden sm:flex items-center gap-2 rounded-full bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition-all duration-300 hover:shadow-xl hover:shadow-primary/30 hover:scale-[1.02] active:scale-[0.98]"
+                >
+                  <DoorOpen className="h-4 w-4" />
+                  <span>Enter Studio</span>
+                </button>
+              </>
             )}
             <button
               onClick={onConnectClick}
