@@ -234,7 +234,7 @@ export const HeaderBar = ({
           </Link>
           {showChatroomButton && onChatroom ? (
             <button
-              className="flex items-center justify-center gap-1.5 sm:gap-2 rounded-md border border-primary/50 bg-white dark:bg-primary/20 px-2 sm:px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary dark:text-white transition hover:border-primary hover:bg-primary hover:text-white disabled:opacity-40 disabled:cursor-not-allowed min-h-[44px] min-w-[44px] sm:min-w-0"
+              className="group flex items-center justify-center gap-1.5 sm:gap-2 rounded-md border border-primary/50 bg-white dark:bg-primary/20 px-2 sm:px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary dark:text-white transition hover:border-primary hover:bg-primary hover:text-white disabled:opacity-40 disabled:cursor-not-allowed min-h-[44px] min-w-[44px] sm:min-w-0"
               type="button"
               onClick={onChatroom}
               data-testid="chatroom-button"
@@ -243,13 +243,13 @@ export const HeaderBar = ({
               title="Chat"
               tabIndex={0}
             >
-              <MessageSquare className="h-4 w-4 text-primary dark:text-white" />
+              <MessageSquare className="h-4 w-4 text-primary group-hover:text-white dark:text-white" />
               <span className="hidden sm:inline">Chat</span>
             </button>
           ) : null}
           {showKanbanButton && onKanban ? (
             <button
-              className="flex items-center justify-center gap-1.5 sm:gap-2 rounded-md border border-primary/50 bg-white dark:bg-primary/20 px-2 sm:px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary dark:text-white transition hover:border-primary hover:bg-primary hover:text-white disabled:opacity-40 disabled:cursor-not-allowed min-h-[44px] min-w-[44px] sm:min-w-0"
+              className="group flex items-center justify-center gap-1.5 sm:gap-2 rounded-md border border-primary/50 bg-white dark:bg-primary/20 px-2 sm:px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary dark:text-white transition hover:border-primary hover:bg-primary hover:text-white disabled:opacity-40 disabled:cursor-not-allowed min-h-[44px] min-w-[44px] sm:min-w-0"
               type="button"
               onClick={onKanban}
               data-testid="kanban-button"
@@ -258,20 +258,20 @@ export const HeaderBar = ({
               title="Kanban"
               tabIndex={0}
             >
-              <LayoutGrid className="h-4 w-4 text-primary dark:text-white" />
+              <LayoutGrid className="h-4 w-4 text-primary group-hover:text-white dark:text-white" />
               <span className="hidden sm:inline">Kanban</span>
             </button>
           ) : null}
           {showSwarmButton && onSwarm ? (
             <button
-              className="flex items-center justify-center gap-1.5 sm:gap-2 rounded-md border border-primary/50 bg-white dark:bg-primary/20 px-2 sm:px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary dark:text-white transition hover:border-primary hover:bg-primary hover:text-white disabled:opacity-40 disabled:cursor-not-allowed min-h-[44px] min-w-[44px] sm:min-w-0"
+              className="group flex items-center justify-center gap-1.5 sm:gap-2 rounded-md border border-primary/50 bg-white dark:bg-primary/20 px-2 sm:px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary dark:text-white transition hover:border-primary hover:bg-primary hover:text-white disabled:opacity-40 disabled:cursor-not-allowed min-h-[44px] min-w-[44px] sm:min-w-0"
               type="button"
               onClick={onSwarm}
               data-testid="swarm-dispatch-button"
               disabled={swarmDisabled}
               title="Swarm"
             >
-              <Zap className="h-4 w-4 text-primary dark:text-white" />
+              <Zap className="h-4 w-4 text-primary group-hover:text-white dark:text-white" />
               <span className="hidden sm:inline">Swarm</span>
             </button>
           ) : null}

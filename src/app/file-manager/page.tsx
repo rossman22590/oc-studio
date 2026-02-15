@@ -82,6 +82,23 @@ export default function FileManagerPage() {
   const [downloadingAll, setDownloadingAll] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState({ current: 0, total: 0 });
 
+  // Enable body scrolling for this page (globals.css sets body { overflow: hidden })
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    const prevY = document.body.style.overflowY;
+    const prevX = document.body.style.overflowX;
+
+    document.body.style.overflow = "auto";
+    document.body.style.overflowY = "auto";
+    document.body.style.overflowX = "hidden";
+
+    return () => {
+      document.body.style.overflow = prev;
+      document.body.style.overflowY = prevY;
+      document.body.style.overflowX = prevX;
+    };
+  }, []);
+
   // Load agents from gateway
   useEffect(() => {
     if (status !== 'connected') {
@@ -601,9 +618,9 @@ export default function FileManagerPage() {
   const pathParts = currentPath ? currentPath.split('/') : [];
 
   return (
-    <div className="relative min-h-screen w-screen overflow-hidden bg-background">
-      <div className="relative z-10 flex h-screen flex-col gap-4 px-3 py-3 sm:px-4 sm:py-4 md:px-6 md:py-6">
-        <div className="w-full">
+    <div className="relative min-h-screen w-screen bg-background">
+      <div className="relative z-10 flex flex-col gap-4 px-3 py-3 sm:px-4 sm:py-4 md:px-6 md:py-6">
+        <div className="w-full shrink-0">
           <HeaderBar
             status={status}
             onConnectionSettings={() => setShowConnectionModal((prev) => !prev)}
@@ -625,7 +642,7 @@ export default function FileManagerPage() {
         </div>
 
         {error && (
-          <div className="w-full">
+          <div className="w-full shrink-0">
             <div className="rounded-md border border-destructive bg-destructive px-4 py-2 text-sm text-destructive-foreground">
               {error}
             </div>
@@ -633,7 +650,7 @@ export default function FileManagerPage() {
         )}
 
         <div
-          className={`glass-panel fade-up min-h-0 flex-1 overflow-hidden p-4 sm:p-6 relative ${dragOver ? 'ring-2 ring-primary ring-offset-2' : ''}`}
+          className={`glass-panel fade-up overflow-visible p-4 sm:p-6 relative ${dragOver ? 'ring-2 ring-primary ring-offset-2' : ''}`}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
@@ -1159,7 +1176,7 @@ export default function FileManagerPage() {
             )}
 
             {/* Content */}
-            <div className="flex-1 overflow-auto p-6">
+            <div className="flex-1 overflow-y-auto overflow-x-hidden p-6 touch-pan-y">
               {previewLoading ? (
                 <div className="flex items-center justify-center h-full">
                   <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" />
