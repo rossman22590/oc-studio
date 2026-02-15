@@ -24,8 +24,8 @@ export const Navigation = ({ status, onConnectClick }: NavigationProps) => {
     <nav
       className={`fixed top-0 left-0 right-0 z-50 transition-all duration-500 ${
         scrolled
-          ? "bg-background/70 backdrop-blur-xl border-b border-border/40 shadow-lg shadow-black/5"
-          : "bg-transparent border-b border-transparent"
+          ? "bg-white backdrop-blur-2xl border-b border-border/30 shadow-xl shadow-black/10"
+          : "bg-white/95 backdrop-blur-xl border-b border-border/20 shadow-md shadow-black/5"
       }`}
     >
       <div className="max-w-7xl mx-auto px-6 sm:px-8 lg:px-10">
@@ -55,24 +55,22 @@ export const Navigation = ({ status, onConnectClick }: NavigationProps) => {
 
           {/* Actions */}
           <div className="flex items-center gap-2 sm:gap-3">
+            <a
+              href="https://beta.machine.myapps.ai/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hidden sm:flex items-center gap-2 rounded-full border border-border/60 px-5 py-2 text-sm font-semibold text-foreground transition-all duration-300 hover:border-primary/40 hover:bg-primary/5 hover:scale-[1.02] active:scale-[0.98]"
+            >
+              <span>Deploy Claw</span>
+            </a>
             {status === "connected" && (
-              <>
-                <a
-                  href="https://beta.machine.myapps.ai/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="hidden sm:flex items-center gap-2 rounded-full border border-border/60 px-5 py-2 text-sm font-semibold text-foreground transition-all duration-300 hover:border-primary/40 hover:bg-primary/5 hover:scale-[1.02] active:scale-[0.98]"
-                >
-                  <span>Deploy Claw</span>
-                </a>
-                <button
-                  onClick={() => router.push("/studio")}
-                  className="hidden sm:flex items-center gap-2 rounded-full bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition-all duration-300 hover:shadow-xl hover:shadow-primary/30 hover:scale-[1.02] active:scale-[0.98]"
-                >
-                  <DoorOpen className="h-4 w-4" />
-                  <span>Enter Studio</span>
-                </button>
-              </>
+              <button
+                onClick={() => router.push("/studio")}
+                className="hidden sm:flex items-center gap-2 rounded-full bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition-all duration-300 hover:shadow-xl hover:shadow-primary/30 hover:scale-[1.02] active:scale-[0.98]"
+              >
+                <DoorOpen className="h-4 w-4" />
+                <span>Enter Studio</span>
+              </button>
             )}
             <button
               onClick={onConnectClick}

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { Cable, ArrowRight, ChevronDown, DoorOpen, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
+import LightPillar from "@/components/LightPillar";
 
 interface HeroProps {
   status: "connected" | "connecting" | "disconnected";
@@ -43,8 +44,29 @@ export const Hero = ({ status, onConnectClick }: HeroProps) => {
 
   return (
     <section className="relative w-full flex items-center justify-center px-6 pt-28 pb-20 sm:pt-36 sm:pb-24 overflow-hidden" style={{ minHeight: "100vh" }}>
+      {/* LightPillar background */}
+      <div className="absolute inset-0 w-full h-full z-0">
+        <LightPillar
+          topColor="#ff2969"
+          bottomColor="#FF9FFC"
+          intensity={2.5}
+          rotationSpeed={1.5}
+          glowAmount={0.008}
+          pillarWidth={3}
+          pillarHeight={0.4}
+          noiseIntensity={0.3}
+          pillarRotation={25}
+          interactive={false}
+          mixBlendMode="screen"
+          quality="high"
+        />
+      </div>
+
+      {/* Black overlay 40% opacity - for better text visibility */}
+      <div className="absolute inset-0 bg-black/40 pointer-events-none z-[1]" />
+
       {/* Ambient glow */}
-      <div className="absolute inset-0 pointer-events-none">
+      <div className="absolute inset-0 pointer-events-none z-[2]">
         <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[600px] bg-primary/8 rounded-full blur-[120px]" />
         <div className="absolute bottom-0 left-1/4 w-[500px] h-[400px] bg-accent/6 rounded-full blur-[100px]" />
         <div className="absolute top-1/3 right-0 w-[300px] h-[300px] bg-primary/5 rounded-full blur-[80px]" />
@@ -52,7 +74,7 @@ export const Hero = ({ status, onConnectClick }: HeroProps) => {
 
       {/* Grid overlay */}
       <div
-        className="absolute inset-0 pointer-events-none opacity-[0.03]"
+        className="absolute inset-0 pointer-events-none opacity-[0.03] z-[2]"
         style={{
           backgroundImage: "linear-gradient(rgba(255,255,255,.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.1) 1px, transparent 1px)",
           backgroundSize: "60px 60px",
@@ -60,7 +82,7 @@ export const Hero = ({ status, onConnectClick }: HeroProps) => {
       />
 
       {/* Particles */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+      <div className="absolute inset-0 pointer-events-none overflow-hidden z-[2]">
         {particles.map((p, i) => (
           <Particle key={i} {...p} />
         ))}
@@ -70,12 +92,12 @@ export const Hero = ({ status, onConnectClick }: HeroProps) => {
       <div className="relative z-10 w-full max-w-5xl mx-auto text-center">
         {/* Badge */}
         <div
-          className={`inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-4 py-1.5 mb-8 sm:mb-10 transition-all duration-700 delay-75 ${
+          className={`inline-flex items-center gap-2 rounded-full border border-white/40 bg-white/10 backdrop-blur-sm px-4 py-1.5 mb-8 sm:mb-10 transition-all duration-700 delay-75 ${
             visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
           }`}
         >
-          <Sparkles className="h-3.5 w-3.5 text-primary" />
-          <span className="text-xs font-semibold text-primary tracking-wide uppercase">AI Agent Command Center</span>
+          <Sparkles className="h-3.5 w-3.5 text-white" />
+          <span className="text-xs font-semibold text-white tracking-wide uppercase">AI Agent Command Center</span>
         </div>
 
         {/* Headline */}
@@ -84,15 +106,15 @@ export const Hero = ({ status, onConnectClick }: HeroProps) => {
             visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
           }`}
         >
-          <span className="block text-foreground">Command Your</span>
-          <span className="block bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent bg-[length:200%_auto] animate-[shimmer_3s_ease-in-out_infinite]">
+          <span className="block text-white">Command Your</span>
+          <span className="block text-white">
             Agent Fleet
           </span>
         </h1>
 
         {/* Subheadline */}
         <p
-          className={`mb-10 sm:mb-14 text-lg sm:text-xl md:text-2xl text-muted-foreground leading-relaxed text-center max-w-2xl mx-auto transition-all duration-1000 delay-200 ${
+          className={`mb-10 sm:mb-14 text-lg sm:text-xl md:text-2xl text-white leading-relaxed text-center max-w-2xl mx-auto transition-all duration-1000 delay-200 ${
             visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-6"
           }`}
         >
@@ -109,14 +131,14 @@ export const Hero = ({ status, onConnectClick }: HeroProps) => {
           {status === "connected" ? (
             <button
               onClick={() => router.push("/studio")}
-              className="group relative inline-flex items-center gap-3 rounded-full bg-primary px-8 py-4 text-base font-bold text-primary-foreground shadow-2xl shadow-primary/30 transition-all duration-300 hover:shadow-3xl hover:shadow-primary/40 hover:scale-[1.03] active:scale-[0.98]"
+              className="group relative inline-flex items-center gap-3 rounded-full bg-white border border-white/40 px-8 py-4 text-base font-bold text-black shadow-2xl shadow-black/20 transition-all duration-300 hover:shadow-3xl hover:shadow-black/30 hover:scale-[1.03] active:scale-[0.98]"
               aria-label="Enter Studio"
               tabIndex={0}
             >
               <DoorOpen className="h-5 w-5 transition-transform group-hover:rotate-12" />
               <span>Enter Studio</span>
               <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
-              <div className="absolute inset-0 rounded-full bg-primary opacity-0 blur-2xl transition-opacity group-hover:opacity-40" />
+              <div className="absolute inset-0 rounded-full bg-white opacity-0 blur-2xl transition-opacity group-hover:opacity-40" />
             </button>
           ) : (
             <button
@@ -133,7 +155,7 @@ export const Hero = ({ status, onConnectClick }: HeroProps) => {
           )}
           <a
             href="#features"
-            className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-card/30 backdrop-blur-sm px-7 py-4 text-base font-semibold text-foreground transition-all duration-300 hover:border-primary/40 hover:bg-primary/5 hover:scale-[1.02] active:scale-[0.98]"
+            className="inline-flex items-center gap-2 rounded-full border border-white/60 bg-card/30 backdrop-blur-sm px-7 py-4 text-base font-semibold text-white transition-all duration-300 hover:border-white/40 hover:bg-white/5 hover:scale-[1.02] active:scale-[0.98]"
           >
             <span>Learn More</span>
             <ChevronDown className="h-4 w-4" />
@@ -142,11 +164,11 @@ export const Hero = ({ status, onConnectClick }: HeroProps) => {
 
         {/* Scroll indicator */}
         <div
-          className={`flex flex-col items-center gap-3 text-muted-foreground/40 transition-all duration-1000 delay-500 ${
+          className={`flex flex-col items-center gap-3 text-white/60 transition-all duration-1000 delay-500 ${
             visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
           }`}
         >
-          <div className="w-px h-12 bg-gradient-to-b from-transparent via-muted-foreground/20 to-muted-foreground/40" />
+          <div className="w-px h-12 bg-gradient-to-b from-transparent via-white/20 to-white/40" />
           <span className="text-[10px] font-semibold uppercase tracking-[0.2em]">Scroll</span>
         </div>
       </div>
