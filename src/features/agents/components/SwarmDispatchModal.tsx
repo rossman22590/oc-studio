@@ -117,16 +117,16 @@ export const SwarmDispatchModal = ({
 
   return (
     <div
-      className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4"
       onClick={onClose}
       onKeyDown={handleKeyDown}
     >
       <div
-        className="glass-panel w-full max-w-3xl max-h-[85vh] flex flex-col animate-scale-in"
+        className="glass-panel w-full max-w-3xl max-h-[95vh] sm:max-h-[85vh] flex flex-col animate-scale-in rounded-lg sm:rounded-xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-border px-6 py-4">
+        <div className="flex items-center justify-between border-b border-border px-4 sm:px-6 py-3 sm:py-4">
           <div className="flex items-center gap-3">
             <Zap className="h-5 w-5 text-primary" />
             <div>
@@ -138,32 +138,33 @@ export const SwarmDispatchModal = ({
           </div>
           <button
             onClick={onClose}
-            className="rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-foreground transition"
+            className="rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-foreground transition min-h-[44px] min-w-[44px] flex items-center justify-center"
+            aria-label="Close"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
         {/* Global prompt */}
-        <div className="border-b border-border px-6 py-3">
+        <div className="border-b border-border px-4 sm:px-6 py-3">
           <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 block">
             Global prompt (fill all agents)
           </label>
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row gap-2">
             <textarea
               ref={globalRef}
               value={globalPrompt}
               onChange={(e) => setGlobalPrompt(e.target.value)}
               placeholder="Type a task to send to every agent..."
-              className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+              className="flex-1 rounded-md border border-border bg-background px-3 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary resize-none min-h-[80px]"
               rows={2}
               disabled={dispatching}
             />
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-row sm:flex-col gap-1.5 sm:gap-1">
               <button
                 onClick={handleFillAll}
                 disabled={!globalPrompt.trim() || dispatching}
-                className="rounded-md border border-border bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/20 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                className="rounded-md border border-border bg-primary/10 px-3 py-2.5 sm:py-1.5 text-xs font-semibold text-primary hover:bg-primary/20 transition disabled:opacity-40 disabled:cursor-not-allowed min-h-[44px] sm:min-h-0"
                 title="Replace all inputs with this prompt"
               >
                 Fill All
@@ -171,7 +172,7 @@ export const SwarmDispatchModal = ({
               <button
                 onClick={handleApplyGlobal}
                 disabled={!globalPrompt.trim() || dispatching}
-                className="rounded-md border border-border bg-muted px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-muted/80 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                className="rounded-md border border-border bg-muted px-3 py-2.5 sm:py-1.5 text-xs font-semibold text-muted-foreground hover:bg-muted/80 transition disabled:opacity-40 disabled:cursor-not-allowed min-h-[44px] sm:min-h-0"
                 title="Fill only empty inputs"
               >
                 Fill Empty
@@ -181,7 +182,7 @@ export const SwarmDispatchModal = ({
         </div>
 
         {/* Per-agent task inputs */}
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
+        <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-3 sm:py-4 space-y-3">
           {agents.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
               <Zap className="h-8 w-8 mb-2 opacity-50" />
@@ -268,11 +269,11 @@ export const SwarmDispatchModal = ({
               </>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-2 w-full sm:w-auto">
             {dispatched ? (
               <button
                 onClick={onClose}
-                className="flex items-center gap-2 rounded-md border border-border bg-muted px-4 py-2 text-sm font-semibold hover:bg-muted/80 transition"
+                className="flex items-center justify-center gap-2 rounded-md border border-border bg-muted px-4 py-2.5 text-sm font-semibold hover:bg-muted/80 transition min-h-[44px]"
               >
                 Close
               </button>
@@ -280,7 +281,7 @@ export const SwarmDispatchModal = ({
               <>
                 <button
                   onClick={onClose}
-                  className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-muted-foreground hover:bg-muted transition"
+                  className="rounded-md border border-border px-4 py-2.5 text-sm font-semibold text-muted-foreground hover:bg-muted transition disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px]"
                   disabled={dispatching}
                 >
                   Cancel
@@ -288,14 +289,15 @@ export const SwarmDispatchModal = ({
                 <button
                   onClick={() => void handleDispatch()}
                   disabled={tasksToSend.length === 0 || dispatching || disabled}
-                  className="flex items-center gap-2 rounded-md bg-primary px-5 py-2 text-sm font-bold text-primary-foreground hover:bg-primary/90 transition disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-primary/20"
+                  className="flex items-center justify-center gap-2 rounded-md bg-primary px-5 py-2.5 text-sm font-bold text-primary-foreground hover:bg-primary/90 transition disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-primary/20 min-h-[44px]"
                 >
                   {dispatching ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
                     <Send className="h-4 w-4" />
                   )}
-                  {dispatching ? "Dispatching..." : "Go — Dispatch All"}
+                  <span className="hidden sm:inline">{dispatching ? "Dispatching..." : "Go — Dispatch All"}</span>
+                  <span className="sm:hidden">{dispatching ? "Dispatching..." : "Dispatch"}</span>
                 </button>
               </>
             )}

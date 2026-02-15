@@ -59,7 +59,6 @@ export const EmptyStatePanel = ({
           {description}
         </p>
       ) : null}
-<<<<<<< HEAD
       {mountedDetail ? (
         <p 
           className="mt-3 rounded-md border border-border/80 bg-background/75 px-4 py-2 font-mono text-[11px] text-muted-foreground/90"

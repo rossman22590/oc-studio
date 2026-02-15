@@ -24,8 +24,8 @@ export const Navigation = ({ status, onConnectClick }: NavigationProps) => {
     <nav
       className={`fixed top-0 left-0 right-0 z-50 transition-all duration-500 ${
         scrolled
-          ? "bg-white backdrop-blur-2xl border-b border-border/30 shadow-xl shadow-black/10"
-          : "bg-white/95 backdrop-blur-xl border-b border-border/20 shadow-md shadow-black/5"
+          ? "bg-white dark:bg-black backdrop-blur-2xl border-b border-border/30 shadow-xl shadow-black/10"
+          : "bg-white/95 dark:bg-black/95 backdrop-blur-xl border-b border-border/20 shadow-md shadow-black/5"
       }`}
     >
       <div className="max-w-7xl mx-auto px-6 sm:px-8 lg:px-10">
@@ -42,7 +42,7 @@ export const Navigation = ({ status, onConnectClick }: NavigationProps) => {
             <div className="relative transition-all duration-300 group-hover:scale-110">
               <img src="/logo.png" alt="MachineClaw" className="h-9 w-9 object-contain" />
             </div>
-            <span className="text-lg sm:text-xl font-bold tracking-tight text-foreground transition-colors">
+            <span className="text-lg sm:text-xl font-bold tracking-tight text-foreground dark:text-white transition-colors">
               Machine<span className="text-primary">Claw</span>
             </span>
           </a>
@@ -71,7 +71,7 @@ export const Navigation = ({ status, onConnectClick }: NavigationProps) => {
                     });
                   }
                 }}
-                className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors duration-200 rounded-lg hover:bg-foreground/5"
+                className="px-4 py-2 text-sm font-medium text-muted-foreground dark:text-white/80 hover:text-foreground dark:hover:text-white transition-colors duration-200 rounded-lg hover:bg-foreground/5 dark:hover:bg-white/10"
               >
                 {item.label}
               </a>
@@ -84,7 +84,7 @@ export const Navigation = ({ status, onConnectClick }: NavigationProps) => {
               href="https://beta.machine.myapps.ai/"
               target="_blank"
               rel="noopener noreferrer"
-              className="hidden sm:flex items-center gap-2 rounded-full border border-border/60 px-5 py-2 text-sm font-semibold text-foreground transition-all duration-300 hover:border-primary/40 hover:bg-primary/5 hover:scale-[1.02] active:scale-[0.98]"
+              className="hidden sm:flex items-center gap-2 rounded-full border border-border/60 dark:border-white/20 px-5 py-2 text-sm font-semibold text-foreground dark:text-white transition-all duration-300 hover:border-primary/40 dark:hover:border-primary/60 hover:bg-primary/5 dark:hover:bg-primary/20 hover:scale-[1.02] active:scale-[0.98]"
             >
               <span>Deploy Claw</span>
             </a>
@@ -93,29 +93,29 @@ export const Navigation = ({ status, onConnectClick }: NavigationProps) => {
                 onClick={() => router.push("/studio")}
                 className="hidden sm:flex items-center gap-2 rounded-full bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition-all duration-300 hover:shadow-xl hover:shadow-primary/30 hover:scale-[1.02] active:scale-[0.98]"
               >
-                <DoorOpen className="h-4 w-4" />
+                <DoorOpen className="h-4 w-4 text-current" />
                 <span>Enter Studio</span>
               </button>
             )}
             <button
               onClick={onConnectClick}
-              className={`flex items-center gap-2 rounded-full px-5 py-2 text-sm font-semibold transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] ${
+                className={`flex items-center gap-2 rounded-full px-5 py-2 text-sm font-semibold transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] ${
                 status === "connected"
-                  ? "border border-border/60 text-foreground hover:border-primary/40 hover:bg-primary/5"
-                  : "bg-primary text-primary-foreground shadow-lg shadow-primary/25 hover:shadow-xl hover:shadow-primary/30"
+                  ? "border border-border/60 dark:border-white/20 text-foreground dark:text-white hover:border-primary/40 dark:hover:border-primary/60 hover:bg-primary/5 dark:hover:bg-primary/20"
+                  : "bg-primary text-primary-foreground dark:text-white shadow-lg shadow-primary/25 hover:shadow-xl hover:shadow-primary/30"
               }`}
             >
-              <Cable className="h-4 w-4" />
+              <Cable className="h-4 w-4 text-current" />
               <span className="hidden sm:inline">{status === "connected" ? "Settings" : "Connect"}</span>
             </button>
 
             {/* Mobile hamburger */}
             <button
               onClick={() => setMobileOpen(!mobileOpen)}
-              className="md:hidden flex items-center justify-center h-9 w-9 rounded-lg border border-border/40 text-foreground hover:bg-foreground/5 transition-colors"
+              className="md:hidden flex items-center justify-center h-9 w-9 rounded-lg border border-border/40 dark:border-white/20 text-foreground dark:text-white hover:bg-foreground/5 dark:hover:bg-white/10 transition-colors"
               aria-label="Toggle menu"
             >
-              {mobileOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+              {mobileOpen ? <X className="h-4 w-4 text-current" /> : <Menu className="h-4 w-4 text-current" />}
             </button>
           </div>
         </div>
@@ -150,7 +150,7 @@ export const Navigation = ({ status, onConnectClick }: NavigationProps) => {
                     });
                   }
                 }}
-                className="px-4 py-2.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors rounded-lg hover:bg-foreground/5"
+                className="px-4 py-2.5 text-sm font-medium text-muted-foreground dark:text-white/80 hover:text-foreground dark:hover:text-white transition-colors rounded-lg hover:bg-foreground/5 dark:hover:bg-white/10"
               >
                 {item.label}
               </a>

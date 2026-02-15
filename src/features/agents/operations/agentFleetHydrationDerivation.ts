@@ -111,7 +111,7 @@ const normalizeExecAsk = (raw: string | null | undefined): ExecAsk | undefined =
   return undefined;
 };
 
-const resolveAgentName = (agent: AgentsListResult["agents"][number]) => {
+export const resolveAgentName = (agent: AgentsListResult["agents"][number]) => {
   const fromList = typeof agent.name === "string" ? agent.name.trim() : "";
   if (fromList) return fromList;
   const fromIdentity = typeof agent.identity?.name === "string" ? agent.identity.name.trim() : "";
@@ -119,7 +119,7 @@ const resolveAgentName = (agent: AgentsListResult["agents"][number]) => {
   return agent.id;
 };
 
-const resolveAgentAvatarUrl = (agent: AgentsListResult["agents"][number]) => {
+export const resolveAgentAvatarUrl = (agent: AgentsListResult["agents"][number]) => {
   const candidate = agent.identity?.avatarUrl ?? agent.identity?.avatar ?? null;
   if (typeof candidate !== "string") return null;
   const trimmed = candidate.trim();
@@ -129,7 +129,7 @@ const resolveAgentAvatarUrl = (agent: AgentsListResult["agents"][number]) => {
   return null;
 };
 
-const resolveDefaultModelForAgent = (
+export const resolveDefaultModelForAgent = (
   agentId: string,
   snapshot: GatewayModelPolicySnapshot | null
 ): string | null => {

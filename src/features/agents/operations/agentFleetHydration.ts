@@ -1,13 +1,18 @@
 import { buildAgentMainSessionKey, isSameSessionKey } from "@/lib/gateway/GatewayClient";
 import { type GatewayModelPolicySnapshot } from "@/lib/gateway/models";
-import { type StudioSettings } from "@/lib/studio/settings";
+import { resolveAgentAvatarSeed, type StudioSettings } from "@/lib/studio/settings";
 import {
   type SummaryPreviewSnapshot,
   type SummarySnapshotPatch,
   type SummaryStatusSnapshot,
 } from "@/features/agents/state/runtimeEventBridge";
 import type { AgentStoreSeed } from "@/features/agents/state/store";
-import { deriveHydrateAgentFleetResult } from "@/features/agents/operations/agentFleetHydrationDerivation";
+import {
+  deriveHydrateAgentFleetResult,
+  resolveAgentName,
+  resolveAgentAvatarUrl,
+  resolveDefaultModelForAgent,
+} from "@/features/agents/operations/agentFleetHydrationDerivation";
 
 type GatewayClientLike = {
   call: (method: string, params: unknown) => Promise<unknown>;
@@ -136,7 +141,6 @@ export async function hydrateAgentFleetFromGateway(params: {
     })
   );
 
-<<<<<<< HEAD
   /* Restore persisted display prefs (toolCallingEnabled / showThinkingTraces) from localStorage */
   let displayPrefs: Record<string, { toolCallingEnabled?: boolean; showThinkingTraces?: boolean }> = {};
   try {

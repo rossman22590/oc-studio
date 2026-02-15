@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
-import { X, Send, Hash, Search, MessageSquare, Users } from "lucide-react";
+import { X, Send, Hash, Search, MessageSquare, Users, Maximize2, Minimize2, Menu } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useAgentStore } from "@/features/agents/state/store";
 import {
   buildFinalAgentChatItems,
@@ -10,6 +12,18 @@ import {
 } from "@/features/agents/components/chatItems";
 import { VoiceDictationButton } from "@/components/VoiceDictationButton";
 import { buildAvatarDataUrl } from "@/lib/avatars/multiavatar";
+import { rewriteMediaLinesToMarkdown } from "@/lib/text/media-markdown";
+import { isMetaMarkdown } from "@/lib/text/message-extract";
+
+// Helper to strip all metadata tags from text
+const stripMetaTags = (text: string): string => {
+  if (!text) return text;
+  return text
+    .split("\n")
+    .filter((line) => !isMetaMarkdown(line.trim()))
+    .join("\n")
+    .trim();
+};
 
 /* ─── types ───────────────────────────────────────────────── */
 
@@ -41,6 +55,7 @@ const AGENT_COLORS = [
 /* ─── localStorage helpers ───────────────────────────────────── */
 
 const STORAGE_KEY = "openclaw.chatroom.groupMessages";
+const STORAGE_KEY_ENABLED_AGENTS = "openclaw.chatroom.enabledAgents";
 
 const loadGroupMessages = (): GroupMessage[] => {
   if (typeof window === "undefined") return [];
@@ -62,6 +77,27 @@ const saveGroupMessages = (messages: GroupMessage[]) => {
   }
 };
 
+const loadEnabledAgents = (): Set<string> => {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_ENABLED_AGENTS);
+    if (!raw) return new Set(); // Default: all enabled
+    const parsed = JSON.parse(raw) as string[];
+    return new Set(parsed);
+  } catch {
+    return new Set(); // Default: all enabled
+  }
+};
+
+const saveEnabledAgents = (enabled: Set<string>) => {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(STORAGE_KEY_ENABLED_AGENTS, JSON.stringify(Array.from(enabled)));
+  } catch (err) {
+    console.warn("Failed to save enabled agents to localStorage:", err);
+  }
+};
+
 const formatTimestamp = (ts: number) => {
   const d = new Date(ts);
   const hh = d.getHours().toString().padStart(2, "0");
@@ -78,11 +114,27 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
   const [selectedAgentId, setSelectedAgentId] = useState<string>(GROUP_CHAT_ID);
   const [message, setMessage] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [showAgentToggleModal, setShowAgentToggleModal] = useState(false);
+  // Auto-fullscreen on mobile, normal size on desktop
+  const [isFullscreen, setIsFullscreen] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth < 640; // sm breakpoint
+    }
+    return false;
+  });
+  const [showMobileSidebar, setShowMobileSidebar] = useState(false); // Mobile sidebar toggle
+  const [visibleGroupMessageCount, setVisibleGroupMessageCount] = useState(0); // Will be initialized based on actual count
+  const [visibleChatItemCount, setVisibleChatItemCount] = useState(0); // Will be initialized based on actual count
+  const [userHasScrolledUp, setUserHasScrolledUp] = useState(false); // Track if user manually scrolled up
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesStartRef = useRef<HTMLDivElement>(null);
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   /* ─── Group Chat state ─── */
   const [groupMessages, setGroupMessages] = useState<GroupMessage[]>(() => loadGroupMessages());
+  // Track which agents are enabled in group chat (default: all enabled)
+  const [enabledAgents, setEnabledAgents] = useState<Set<string>>(() => loadEnabledAgents());
   // Track which agents are pending a group response: agentId → prevOutputLinesCount
   const pendingGroupRef = useRef<Map<string, number>>(new Map());
   // Track which outputLines we've already captured so we don't double-add
@@ -92,6 +144,11 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
   useEffect(() => {
     saveGroupMessages(groupMessages);
   }, [groupMessages]);
+
+  /* ─── Persist enabled agents to localStorage ─── */
+  useEffect(() => {
+    saveEnabledAgents(enabledAgents);
+  }, [enabledAgents]);
 
   const isGroupChat = selectedAgentId === GROUP_CHAT_ID;
   const selectedAgent = agents.find((a) => a.agentId === selectedAgentId);
@@ -135,9 +192,11 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
       if (currentCount > prevCount) {
         // Get the new lines (skip the "> user message" echo line and grab actual response)
         const newLines = agent.outputLines.slice(prevCount);
-        // Filter out user-echo lines that start with "> "
-        const responseParts = newLines.filter((l: string) => !l.startsWith("> "));
-        const responseText = responseParts.join("\n").trim();
+        // Filter out user-echo lines that start with "> " and metadata tags
+        const responseParts = newLines.filter(
+          (l: string) => !l.startsWith("> ") && !isMetaMarkdown(l.trim())
+        );
+        const responseText = stripMetaTags(responseParts.join("\n"));
 
         if (responseText) {
           setGroupMessages((prev) => [
@@ -183,8 +242,71 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
 
   /* ─── Auto-scroll ─── */
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatItems.length, liveAssistantText, liveThinkingText, selectedAgentId, groupMessages.length, groupLiveAgents.length]);
+    // Always scroll to latest unless user has manually scrolled up
+    if (!userHasScrolledUp && messagesScrollRef.current) {
+      // Use requestAnimationFrame to ensure DOM is updated after slice
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const scrollContainer = messagesScrollRef.current;
+          if (scrollContainer) {
+            scrollContainer.scrollTop = scrollContainer.scrollHeight;
+          }
+        });
+      });
+    }
+  }, [chatItems.length, liveAssistantText, liveThinkingText, selectedAgentId, groupMessages.length, groupLiveAgents.length, userHasScrolledUp, visibleGroupMessageCount, visibleChatItemCount]);
+
+  /* ─── Lazy load messages on scroll up & track scroll position ─── */
+  useEffect(() => {
+    if (!messagesScrollRef.current) return;
+
+    const scrollContainer = messagesScrollRef.current;
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 100;
+      
+      // Track if user has scrolled up (not near bottom)
+      setUserHasScrolledUp(!isNearBottom);
+      
+      // If scrolled near the top, load more messages
+      if (scrollTop < 200) {
+        if (isGroupChat && visibleGroupMessageCount < groupMessages.length) {
+          const oldScrollHeight = scrollContainer.scrollHeight;
+          const newCount = Math.min(visibleGroupMessageCount + 50, groupMessages.length);
+          setVisibleGroupMessageCount(newCount);
+          // Maintain scroll position after loading
+          setTimeout(() => {
+            const heightDiff = scrollContainer.scrollHeight - oldScrollHeight;
+            scrollContainer.scrollTop = scrollTop + heightDiff;
+          }, 0);
+        } else if (!isGroupChat && selectedAgent && visibleChatItemCount < chatItems.length) {
+          const oldScrollHeight = scrollContainer.scrollHeight;
+          const newCount = Math.min(visibleChatItemCount + 50, chatItems.length);
+          setVisibleChatItemCount(newCount);
+          // Maintain scroll position after loading
+          setTimeout(() => {
+            const heightDiff = scrollContainer.scrollHeight - oldScrollHeight;
+            scrollContainer.scrollTop = scrollTop + heightDiff;
+          }, 0);
+        }
+      }
+    };
+
+    scrollContainer.addEventListener("scroll", handleScroll, { passive: true });
+    return () => scrollContainer.removeEventListener("scroll", handleScroll);
+  }, [isGroupChat, visibleGroupMessageCount, visibleChatItemCount, groupMessages.length, chatItems.length, selectedAgent]);
+
+  /* ─── Initialize visible count when switching agents/chat mode ─── */
+  useEffect(() => {
+    // Always reset to last 50 when switching (for performance)
+    if (isGroupChat) {
+      setVisibleGroupMessageCount(Math.min(50, groupMessages.length));
+      setUserHasScrolledUp(false);
+    } else if (selectedAgent) {
+      setVisibleChatItemCount(Math.min(50, chatItems.length));
+      setUserHasScrolledUp(false);
+    }
+  }, [selectedAgentId, isGroupChat]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -201,7 +323,11 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
       });
       contextLines.push(`[You]: ${userMessage}`);
 
-      const agentNames = agents.map((a) => a.name).join(", ");
+      // Only include enabled agents in the context (if enabledAgents is empty, all are enabled)
+      const activeAgents = enabledAgents.size === 0
+        ? agents
+        : agents.filter((a) => enabledAgents.has(a.agentId));
+      const agentNames = activeAgents.map((a) => a.name).join(", ");
 
       return [
         `[GROUP CHAT] You are in a group discussion with these other AI agents: ${agentNames}.`,
@@ -214,7 +340,7 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
         `Now respond with your contribution to the group discussion. Be concise and conversational.`,
       ].join("\n");
     },
-    [groupMessages, agents]
+    [groupMessages, agents, enabledAgents]
   );
 
   /* ─── Send handler ─── */
@@ -231,10 +357,14 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
       };
       setGroupMessages((prev) => [...prev, userMsg]);
 
-      // Build context and dispatch to all agents
+      // Build context and dispatch to enabled agents only
       const context = buildGroupContext(message.trim());
 
       for (const agent of agents) {
+        // Skip disabled agents (if enabledAgents is empty, all are enabled by default)
+        if (enabledAgents.size > 0 && !enabledAgents.has(agent.agentId)) {
+          continue;
+        }
         // Record current outputLines count before sending
         pendingGroupRef.current.set(agent.agentId, agent.outputLines.length);
         // Send with group context
@@ -253,7 +383,33 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
 
   const handleSelectAgent = useCallback((agentId: string) => {
     setSelectedAgentId(agentId);
+    setMessage("");
+    setShowMobileSidebar(false); // Close mobile sidebar when agent is selected
+    // Reset scroll state when switching agents
+    setUserHasScrolledUp(false);
   }, []);
+
+  // Auto-adjust fullscreen on window resize (only enforce on mobile)
+  useEffect(() => {
+    const handleResize = () => {
+      // Only enforce fullscreen on mobile, allow manual toggle on desktop
+      if (window.innerWidth < 640) {
+        // Mobile - always force fullscreen
+        setIsFullscreen(true);
+      }
+      // Desktop - don't interfere with user's fullscreen toggle
+    };
+
+    window.addEventListener('resize', handleResize);
+    // Check on mount - only enforce on mobile
+    if (typeof window !== 'undefined' && window.innerWidth < 640) {
+      setIsFullscreen(true);
+    }
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, []); // Empty deps - only run on mount and actual window resize, don't interfere with manual toggles
 
   // Close on Escape
   useEffect(() => {
@@ -285,11 +441,24 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
       aria-label="Agent Chatroom"
     >
       <div
-        className="relative flex w-[95vw] max-w-6xl h-[85vh] rounded-2xl border border-border/60 bg-background shadow-2xl overflow-hidden animate-scale-in"
+        className={`relative flex border border-border/60 bg-background shadow-2xl overflow-hidden animate-scale-in ${
+          isFullscreen
+            ? "w-screen h-screen rounded-none"
+            : "w-full sm:w-[95vw] max-w-6xl h-[95vh] sm:h-[85vh] rounded-lg sm:rounded-2xl"
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Mobile sidebar backdrop - only show when sidebar is open */}
+        {showMobileSidebar && (
+          <div
+            className="sm:hidden fixed inset-0 bg-black/60 z-[245] -m-4"
+            onClick={() => setShowMobileSidebar(false)}
+            aria-hidden="true"
+          />
+        )}
         {/* ─── LEFT SIDEBAR ─── */}
-        <div className="w-72 shrink-0 flex flex-col border-r border-border/60 bg-muted/30">
+        {/* Desktop sidebar - always visible on desktop */}
+        <div className={`${isFullscreen ? 'w-72' : 'w-72'} shrink-0 flex-col border-r border-border/60 bg-muted/30 hidden sm:flex`}>
           {/* Sidebar header */}
           <div className="flex items-center gap-2 px-4 py-3 border-b border-border/50">
             <MessageSquare className="h-5 w-5 text-primary" />
@@ -436,10 +605,171 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
           </div>
         </div>
 
+        {/* ─── MOBILE SIDEBAR ─── (completely separate, only shows on mobile when menu clicked) */}
+        {showMobileSidebar && (
+          <div className="sm:hidden absolute inset-0 z-[250] flex flex-col bg-background shadow-2xl">
+            {/* Mobile sidebar header with close button */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border/50 bg-background">
+              <span className="text-sm font-semibold">Select Agent</span>
+              <button
+                type="button"
+                onClick={() => setShowMobileSidebar(false)}
+                className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition min-h-[44px] min-w-[44px] flex items-center justify-center"
+                aria-label="Close sidebar"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Search */}
+            <div className="px-3 py-2 border-b border-border/50">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search agents…"
+                  className="w-full rounded-lg bg-muted/60 py-2 pl-8 pr-3 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+                />
+              </div>
+            </div>
+
+            {/* Channel list - same content as desktop */}
+            <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5">
+              {/* ── Group Chat channel ── */}
+              <button
+                onClick={() => handleSelectAgent(GROUP_CHAT_ID)}
+                className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-all ${
+                  isGroupChat
+                    ? "bg-primary/12 border border-primary/25"
+                    : "hover:bg-muted/60 border border-transparent"
+                }`}
+                tabIndex={0}
+                aria-label="Group Chat with all agents"
+              >
+                <div className="relative shrink-0 flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-primary/30 to-primary/10 border-2 border-primary/40">
+                  <Users className="h-5 w-5 text-primary" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-1">
+                    <p
+                      className={`text-sm font-bold truncate ${
+                        isGroupChat ? "text-primary" : "text-foreground"
+                      }`}
+                    >
+                      Group Chat
+                    </p>
+                    <span className="shrink-0 text-[9px] font-bold uppercase tracking-wider text-primary/70">
+                      All
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground truncate leading-snug mt-0.5">
+                    {agents.length} agents • chat together
+                  </p>
+                </div>
+                {groupMessages.length > 0 && (
+                  <span className="shrink-0 rounded-full bg-primary/20 px-1.5 py-0.5 text-[9px] font-bold text-primary">
+                    {groupMessages.length}
+                  </span>
+                )}
+              </button>
+
+              {/* Divider */}
+              <div className="mx-2 my-1.5 border-t border-border/40" />
+              <p className="px-3 py-1 text-[9px] font-bold uppercase tracking-[0.15em] text-muted-foreground/60">
+                Direct Messages
+              </p>
+
+              {/* ── Individual agent channels ── */}
+              {filteredAgents.map((agent, index) => {
+                const isActive = agent.agentId === selectedAgentId;
+                const isRunning = agent.status === "running";
+                const color = AGENT_COLORS[index % AGENT_COLORS.length];
+                const lastLine = agent.streamText || agent.lastResult || "";
+                const preview =
+                  lastLine.length > 50
+                    ? lastLine.slice(0, 50) + "…"
+                    : lastLine || "No messages yet";
+                const avatarUrl = buildAvatarDataUrl(
+                  agent.avatarSeed || agent.name || agent.agentId
+                );
+
+                return (
+                  <button
+                    key={agent.agentId}
+                    onClick={() => handleSelectAgent(agent.agentId)}
+                    className={`group flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition-all ${
+                      isActive
+                        ? "bg-primary/12 border border-primary/25"
+                        : "hover:bg-muted/60 border border-transparent"
+                    }`}
+                    tabIndex={0}
+                    aria-label={`Chat with ${agent.name}`}
+                  >
+                    <div className="relative shrink-0">
+                      <img
+                        src={avatarUrl}
+                        alt={agent.name}
+                        className="h-10 w-10 rounded-full border-2"
+                        style={{ borderColor: color }}
+                      />
+                      <span
+                        className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-background ${
+                          isRunning ? "bg-green-500 animate-pulse" : "bg-muted-foreground/40"
+                        }`}
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-1">
+                        <p
+                          className={`text-sm font-semibold truncate ${
+                            isActive ? "text-primary" : "text-foreground"
+                          }`}
+                        >
+                          {agent.name}
+                        </p>
+                        {isRunning && (
+                          <span className="shrink-0 text-[9px] font-bold uppercase tracking-wider text-green-500">
+                            Live
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground truncate leading-snug mt-0.5">
+                        {preview}
+                      </p>
+                    </div>
+                    {agent.outputLines.length > 0 && (
+                      <span className="mt-1 shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-bold text-muted-foreground">
+                        {agent.outputLines.length}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+
+              {filteredAgents.length === 0 && (
+                <p className="px-4 py-6 text-center text-xs text-muted-foreground">
+                  No agents found
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* ─── RIGHT PANE ─── */}
-        <div className="flex flex-1 flex-col min-w-0">
+        <div className={`flex flex-1 flex-col min-w-0 ${showMobileSidebar ? 'hidden sm:flex' : ''}`}>
           {/* Chat header */}
-          <div className="flex items-center gap-3 border-b border-border/50 px-5 py-3 bg-background/80 backdrop-blur-sm">
+          <div className="flex items-center gap-2 sm:gap-3 border-b border-border/50 px-3 sm:px-5 py-2.5 sm:py-3 bg-background/80 backdrop-blur-sm">
+            {/* Mobile sidebar toggle button */}
+            <button
+              type="button"
+              onClick={() => setShowMobileSidebar((prev) => !prev)}
+              className="sm:hidden rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition min-h-[44px] min-w-[44px] flex items-center justify-center"
+              aria-label="Toggle sidebar"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
             {isGroupChat ? (
               <>
                 <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/15">
@@ -448,30 +778,69 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
                 <div className="flex items-center gap-2 min-w-0">
                   <h3 className="text-sm font-bold text-foreground">Group Chat</h3>
                   <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-                    {agents.length} agents
+                    {enabledAgents.size === 0 ? agents.length : enabledAgents.size} of {agents.length} agents
                   </span>
                 </div>
-                {/* Stacked avatars */}
-                <div className="ml-2 flex -space-x-2">
-                  {agents.slice(0, 6).map((a, i) => (
-                    <img
-                      key={a.agentId}
-                      src={buildAvatarDataUrl(a.avatarSeed || a.name || a.agentId)}
-                      alt={a.name}
-                      className="h-6 w-6 rounded-full border-2 border-background"
-                      style={{ zIndex: 6 - i }}
-                    />
-                  ))}
+                {/* Stacked avatars - clickable to toggle agents */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    // Toggle modal for agent selection
+                    setShowAgentToggleModal((prev) => !prev);
+                  }}
+                  className="ml-2 flex -space-x-2 hover:opacity-80 transition-opacity cursor-pointer relative z-10"
+                  title="Click to toggle agents in group chat"
+                >
+                  {agents.slice(0, 6).map((a, i) => {
+                    const isEnabled = enabledAgents.size === 0 || enabledAgents.has(a.agentId);
+                    return (
+                      <img
+                        key={a.agentId}
+                        src={buildAvatarDataUrl(a.avatarSeed || a.name || a.agentId)}
+                        alt={a.name}
+                        className={`h-6 w-6 rounded-full border-2 border-background transition-all ${
+                          isEnabled ? "opacity-100" : "opacity-30 grayscale"
+                        }`}
+                        style={{ zIndex: 6 - i }}
+                      />
+                    );
+                  })}
                   {agents.length > 6 && (
                     <div className="flex h-6 w-6 items-center justify-center rounded-full bg-muted border-2 border-background text-[9px] font-bold text-muted-foreground">
                       +{agents.length - 6}
                     </div>
                   )}
-                </div>
+                </button>
                 <div className="ml-auto flex items-center gap-1.5">
                   <span className="rounded-md bg-muted px-2 py-1 text-[10px] font-bold text-muted-foreground">
                     {groupMessages.length} messages
                   </span>
+                  {/* Fullscreen button - only show on desktop */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsFullscreen((prev) => !prev);
+                    }}
+                    className="hidden sm:flex rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition min-h-[44px] min-w-[44px] items-center justify-center"
+                    title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                    aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                  >
+                    {isFullscreen ? (
+                      <Minimize2 className="h-5 w-5" />
+                    ) : (
+                      <Maximize2 className="h-5 w-5" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition"
+                    aria-label="Close chatroom"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
                 </div>
               </>
             ) : selectedAgent ? (
@@ -505,6 +874,31 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
                   <span className="rounded-md bg-muted px-2 py-1 text-[10px] font-bold text-muted-foreground">
                     {chatItems.length} messages
                   </span>
+                  {/* Fullscreen button - only show on desktop */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsFullscreen((prev) => !prev);
+                    }}
+                    className="hidden sm:flex rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition min-h-[44px] min-w-[44px] items-center justify-center"
+                    title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                    aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                  >
+                    {isFullscreen ? (
+                      <Minimize2 className="h-5 w-5" />
+                    ) : (
+                      <Maximize2 className="h-5 w-5" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition"
+                    aria-label="Close chatroom"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
                 </div>
               </>
             ) : (
@@ -512,19 +906,10 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
                 Select an agent to start chatting
               </p>
             )}
-
-            <button
-              onClick={onClose}
-              className="ml-2 rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition"
-              aria-label="Close chatroom"
-              tabIndex={0}
-            >
-              <X className="h-5 w-5" />
-            </button>
           </div>
 
           {/* ─── Messages area ─── */}
-          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3 scrollbar-thin">
+          <div ref={messagesScrollRef} className="flex-1 overflow-y-auto px-5 py-4 space-y-3 scrollbar-thin">
 
             {/* ── Group Chat messages ── */}
             {isGroupChat && groupMessages.length === 0 && (
@@ -538,9 +923,27 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
               </div>
             )}
 
-            {isGroupChat &&
-              groupMessages.map((msg) => {
-                if (msg.role === "user") {
+            {isGroupChat && (
+              <>
+                {/* Load more trigger at top */}
+                {visibleGroupMessageCount < groupMessages.length && (
+                  <div ref={messagesStartRef} className="flex justify-center py-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setVisibleGroupMessageCount((prev) => Math.min(prev + 50, groupMessages.length));
+                      }}
+                      className="text-xs text-muted-foreground hover:text-foreground transition"
+                    >
+                      Load {Math.min(50, groupMessages.length - visibleGroupMessageCount)} older messages
+                    </button>
+                  </div>
+                )}
+                {/* Render only visible messages (last N messages) */}
+                {groupMessages
+                  .slice(-visibleGroupMessageCount)
+                  .map((msg) => {
+                    if (msg.role === "user") {
                   return (
                     <div key={msg.id} className="flex items-start gap-3 justify-end">
                       <div className="max-w-[75%] rounded-2xl rounded-tr-sm bg-primary px-4 py-3 shadow-sm">
@@ -583,14 +986,18 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
                         </span>
                       </div>
                       <div className="rounded-2xl rounded-tl-sm bg-muted/60 px-4 py-3 shadow-sm">
-                        <p className="text-sm leading-relaxed whitespace-pre-wrap text-foreground">
-                          {msg.text}
-                        </p>
+                        <div className="agent-markdown text-sm leading-relaxed text-foreground">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {rewriteMediaLinesToMarkdown(stripMetaTags(msg.text))}
+                          </ReactMarkdown>
+                        </div>
                       </div>
                     </div>
                   </div>
                 );
-              })}
+                  })}
+              </>
+            )}
 
             {/* Group chat: live typing indicators for pending agents */}
             {isGroupChat &&
@@ -624,9 +1031,11 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
                         </div>
                         {liveText ? (
                           <div className="rounded-2xl rounded-tl-sm bg-muted/40 border border-border/30 px-4 py-3 shadow-sm">
-                            <p className="text-sm leading-relaxed whitespace-pre-wrap text-foreground/80">
-                              {liveText}
-                            </p>
+                            <div className="agent-markdown text-sm leading-relaxed text-foreground/80">
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                {rewriteMediaLinesToMarkdown(liveText)}
+                              </ReactMarkdown>
+                            </div>
                           </div>
                         ) : (
                           <div className="rounded-2xl rounded-tl-sm bg-muted/50 px-5 py-3.5">
@@ -658,9 +1067,26 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
             )}
 
             {/* ── 1:1 Chat messages ── */}
-            {!isGroupChat &&
-              selectedAgent &&
-              chatItems.map((item, index) => {
+            {!isGroupChat && selectedAgent && (
+              <>
+                {/* Load more trigger at top for 1:1 chat */}
+                {visibleChatItemCount < chatItems.length && (
+                  <div className="flex justify-center py-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setVisibleChatItemCount((prev) => Math.min(prev + 50, chatItems.length));
+                      }}
+                      className="text-xs text-muted-foreground hover:text-foreground transition"
+                    >
+                      Load {Math.min(50, chatItems.length - visibleChatItemCount)} older messages
+                    </button>
+                  </div>
+                )}
+                {/* Render only visible chat items (last N items) */}
+                {chatItems
+                  .slice(-visibleChatItemCount)
+                  .map((item, index) => {
                 const isUser = item.kind === "user";
                 const agentColor =
                   AGENT_COLORS[
@@ -721,9 +1147,11 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
                       className="flex items-start gap-3 justify-end"
                     >
                       <div className="max-w-[75%] rounded-2xl rounded-tr-sm bg-primary px-4 py-3 shadow-sm">
-                        <p className="text-sm leading-relaxed whitespace-pre-wrap text-primary-foreground">
-                          {item.text}
-                        </p>
+                        <div className="agent-markdown text-sm leading-relaxed text-primary-foreground [&_*]:text-primary-foreground">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {rewriteMediaLinesToMarkdown(item.text)}
+                          </ReactMarkdown>
+                        </div>
                       </div>
                       <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center shrink-0 mt-0.5">
                         <span className="text-xs font-bold text-primary">U</span>
@@ -754,14 +1182,18 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
                         </span>
                       </div>
                       <div className="rounded-2xl rounded-tl-sm bg-muted/60 px-4 py-3 shadow-sm">
-                        <p className="text-sm leading-relaxed whitespace-pre-wrap text-foreground">
-                          {item.text}
-                        </p>
+                        <div className="agent-markdown text-sm leading-relaxed text-foreground">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {rewriteMediaLinesToMarkdown(item.text)}
+                          </ReactMarkdown>
+                        </div>
                       </div>
                     </div>
                   </div>
                 );
-              })}
+                  })}
+              </>
+            )}
 
             {/* 1:1 Live thinking trace */}
             {!isGroupChat && selectedAgent && liveThinkingText && (
@@ -808,9 +1240,11 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
                     </span>
                   </div>
                   <div className="rounded-2xl rounded-tl-sm bg-muted/60 px-4 py-3 shadow-sm">
-                    <p className="text-sm leading-relaxed whitespace-pre-wrap text-foreground">
-                      {liveAssistantText}
-                    </p>
+                    <div className="agent-markdown text-sm leading-relaxed text-foreground">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {rewriteMediaLinesToMarkdown(liveAssistantText)}
+                      </ReactMarkdown>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -846,9 +1280,9 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
 
           {/* ─── Input area ─── */}
           {(isGroupChat || selectedAgent) && (
-            <div className="border-t border-border/50 bg-background/80 backdrop-blur-sm px-5 py-3">
-              <div className="flex items-end gap-2">
-                <div className="flex-1 relative">
+            <div className="border-t border-border/50 bg-background/80 backdrop-blur-sm px-3 sm:px-5 py-2.5 sm:py-3">
+              <div className="flex items-end gap-2 flex-wrap sm:flex-nowrap">
+                <div className="flex-1 relative w-full min-w-0">
                   <input
                     ref={inputRef}
                     type="text"
@@ -862,10 +1296,18 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
                     }}
                     placeholder={
                       isGroupChat
-                        ? `Message all ${agents.length} agents…`
+                        ? (() => {
+                            const enabled = enabledAgents.size === 0
+                              ? agents
+                              : agents.filter((a) => enabledAgents.has(a.agentId));
+                            const names = enabled.map((a) => a.name).join(", ");
+                            return enabled.length > 0
+                              ? `Message: ${names}…`
+                              : `Message all ${agents.length} agents…`;
+                          })()
                         : `Message ${selectedAgent?.name}…`
                     }
-                    className="w-full rounded-xl border border-border/60 bg-muted/40 px-4 py-3 pr-12 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/30 transition"
+                    className="w-full rounded-xl border border-border/60 bg-muted/40 px-3 sm:px-4 py-2.5 sm:py-3 pr-12 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/30 transition min-h-[44px]"
                     autoFocus
                     disabled={
                       isGroupChat
@@ -892,11 +1334,12 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
                       ? anyGroupAgentRunning
                       : selectedAgent?.status === "running")
                   }
-                  className="flex h-[46px] items-center gap-2 rounded-xl bg-primary px-5 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+                  className="flex h-[46px] min-h-[44px] items-center justify-center gap-2 rounded-xl bg-primary px-4 sm:px-5 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
                   aria-label="Send message"
                   tabIndex={0}
                 >
                   <Send className="h-4 w-4" />
+                  <span className="hidden sm:inline">Send</span>
                 </button>
               </div>
               <p className="mt-1.5 text-[10px] text-muted-foreground text-center">
@@ -914,6 +1357,139 @@ export const ChatroomModal = ({ onClose, onSendMessage }: ChatroomModalProps) =>
           )}
         </div>
       </div>
+
+      {/* Agent Toggle Modal */}
+      {showAgentToggleModal && (
+        <div
+          className="fixed inset-0 z-[250] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setShowAgentToggleModal(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-lg border border-border bg-card shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="border-b border-border px-5 py-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-bold text-foreground">Toggle Agents in Group Chat</h3>
+                <button
+                  type="button"
+                  onClick={() => setShowAgentToggleModal(false)}
+                  className="text-muted-foreground hover:text-foreground transition"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Disabled agents won't receive messages in group chat
+              </p>
+            </div>
+            <div className="max-h-[60vh] overflow-y-auto px-5 py-4">
+              <div className="space-y-2">
+                {agents.map((agent) => {
+                  const isEnabled = enabledAgents.size === 0 || enabledAgents.has(agent.agentId);
+                  const color = getAgentColor(agent.agentId);
+                  const avatarUrl = buildAvatarDataUrl(
+                    agent.avatarSeed || agent.name || agent.agentId
+                  );
+                  return (
+                    <button
+                      key={agent.agentId}
+                      type="button"
+                      onClick={() => {
+                        const next = new Set(enabledAgents);
+                        if (isEnabled) {
+                          next.delete(agent.agentId);
+                        } else {
+                          next.add(agent.agentId);
+                        }
+                        setEnabledAgents(next);
+                      }}
+                      className={`w-full flex items-center gap-3 rounded-lg border px-4 py-3 transition-all ${
+                        isEnabled
+                          ? "border-border bg-muted/40 hover:bg-muted/60"
+                          : "border-border/50 bg-muted/20 opacity-60 hover:opacity-80"
+                      }`}
+                    >
+                      <img
+                        src={avatarUrl}
+                        alt={agent.name}
+                        className={`h-10 w-10 rounded-full border-2 shrink-0 ${
+                          isEnabled ? "" : "grayscale opacity-50"
+                        }`}
+                        style={{ borderColor: color }}
+                      />
+                      <div className="flex-1 text-left min-w-0">
+                        <p className="text-sm font-semibold text-foreground truncate">
+                          {agent.name}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {isEnabled ? "Enabled" : "Disabled"}
+                        </p>
+                      </div>
+                      <div
+                        className={`h-5 w-5 rounded-full border-2 shrink-0 flex items-center justify-center ${
+                          isEnabled
+                            ? "bg-primary border-primary"
+                            : "bg-transparent border-muted-foreground/40"
+                        }`}
+                      >
+                        {isEnabled && (
+                          <svg
+                            className="h-3 w-3 text-primary-foreground"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={3}
+                              d="M5 13l4 4L19 7"
+                            />
+                          </svg>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="border-t border-border px-5 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Enable all
+                    setEnabledAgents(new Set(agents.map((a) => a.agentId)));
+                  }}
+                  className="text-xs text-muted-foreground hover:text-foreground transition"
+                >
+                  Enable All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Disable all
+                    setEnabledAgents(new Set());
+                  }}
+                  className="text-xs text-muted-foreground hover:text-foreground transition"
+                >
+                  Disable All
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAgentToggleModal(false);
+                }}
+                className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

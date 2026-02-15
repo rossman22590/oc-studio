@@ -666,7 +666,7 @@ export const KanbanBoardModal = ({
       aria-label="Kanban Board"
     >
       <div
-        className="relative flex flex-col w-[95vw] max-w-7xl h-[85vh] rounded-2xl border border-border/60 bg-background shadow-2xl overflow-hidden animate-scale-in"
+        className="relative flex flex-col w-full sm:w-[95vw] max-w-7xl h-[95vh] sm:h-[85vh] rounded-lg sm:rounded-2xl border border-border/60 bg-background shadow-2xl overflow-hidden animate-scale-in"
         onClick={(e) => e.stopPropagation()}
       >
         {/* ─── Header ─── */}
@@ -676,25 +676,27 @@ export const KanbanBoardModal = ({
               <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" />
             </svg>
           </div>
-          <h2 className="text-sm font-bold uppercase tracking-[0.1em] text-foreground">
-            Kanban Board
+          <h2 className="text-xs sm:text-sm font-bold uppercase tracking-[0.1em] text-foreground">
+            <span className="hidden sm:inline">Kanban Board</span>
+            <span className="sm:hidden">Kanban</span>
           </h2>
-          <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary">
+          <span className="hidden sm:inline rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary">
             {cards.length} cards
           </span>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
             <button
               onClick={() => setShowForm((v) => !v)}
-              className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-foreground transition hover:bg-primary/90 shadow-sm"
+              className="flex items-center justify-center gap-1.5 rounded-lg bg-primary px-2.5 sm:px-3 py-1.5 text-xs font-bold text-primary-foreground transition hover:bg-primary/90 shadow-sm min-h-[44px] sm:min-h-0"
               aria-label="Add new card"
+              title="New Task"
               tabIndex={0}
             >
               <Plus className="h-3.5 w-3.5" />
-              New Task
+              <span className="hidden sm:inline">New Task</span>
             </button>
             <button
               onClick={onClose}
-              className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition"
+              className="rounded-md p-1.5 sm:p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
               aria-label="Close kanban"
               tabIndex={0}
             >
@@ -705,7 +707,7 @@ export const KanbanBoardModal = ({
 
         {/* ─── New card form ─── */}
         {showForm && (
-          <div className="border-b border-border/50 bg-muted/20 px-6 py-4 shrink-0">
+          <div className="border-b border-border/50 bg-muted/20 px-3 sm:px-6 py-3 sm:py-4 shrink-0">
             <div className="flex flex-col gap-3 max-w-2xl mx-auto">
               <input
                 type="text"
@@ -790,10 +792,10 @@ export const KanbanBoardModal = ({
         )}
 
         {/* ─── Columns ─── */}
-        <div className="flex-1 flex gap-4 p-4 overflow-x-auto min-h-0">
+        <div className="flex-1 flex flex-col sm:flex-row gap-3 sm:gap-4 p-2 sm:p-4 overflow-x-auto sm:overflow-y-auto overflow-y-auto min-h-0">
           {/* New column */}
           <div
-            className="flex-1 min-w-[280px] flex flex-col rounded-xl bg-muted/20 border border-border/30"
+            className="flex-1 w-full sm:min-w-[280px] flex flex-col rounded-lg sm:rounded-xl bg-muted/20 border border-border/30"
             onDragOver={handleDragOver}
             onDrop={() => handleDrop("new")}
           >
@@ -820,7 +822,7 @@ export const KanbanBoardModal = ({
 
           {/* In Progress column */}
           <div
-            className="flex-1 min-w-[280px] flex flex-col rounded-xl bg-muted/20 border border-border/30"
+            className="flex-1 w-full sm:min-w-[280px] flex flex-col rounded-lg sm:rounded-xl bg-muted/20 border border-border/30"
             onDragOver={handleDragOver}
             onDrop={() => handleDrop("in_progress")}
           >
@@ -847,7 +849,7 @@ export const KanbanBoardModal = ({
 
           {/* Complete column */}
           <div
-            className="flex-1 min-w-[280px] flex flex-col rounded-xl bg-muted/20 border border-border/30"
+            className="flex-1 w-full sm:min-w-[280px] flex flex-col rounded-lg sm:rounded-xl bg-muted/20 border border-border/30"
             onDragOver={handleDragOver}
             onDrop={() => handleDrop("complete")}
           >

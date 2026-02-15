@@ -114,8 +114,13 @@ export const AgentOfficeScene = () => {
       queueLivePatch: (agentId: string, patch: Partial<AgentState>) => {
         dispatch({ type: "updateAgent", agentId, patch });
       },
+      clearPendingLivePatch: (agentId: string) => {
+        // Clear any pending live patches for the agent
+      },
       loadSummarySnapshot: async () => { /* not needed in office view */ },
-      loadAgentHistory: (agentId: string) => loadAgentHistory(agentId),
+      requestHistoryRefresh: async (command: { agentId: string; reason: "chat-final-no-trace" }) => {
+        void loadAgentHistory(command.agentId);
+      },
       refreshHeartbeatLatestUpdate: () => {},
       bumpHeartbeatTick: () => {},
       setTimeout: (fn, delayMs) => window.setTimeout(fn, delayMs),
@@ -477,6 +482,18 @@ export const AgentOfficeScene = () => {
           fov: 50,
         }}
         shadows
+        style={{ 
+          width: '100%', 
+          height: '100%', 
+          display: 'block',
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 0
+        }}
+        gl={{ preserveDrawingBuffer: true, antialias: true }}
       >
         <Suspense fallback={null}>
           {/* Lighting */}

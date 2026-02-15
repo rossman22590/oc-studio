@@ -1040,7 +1040,9 @@ export const AgentChatPanel = ({
 
   const handleSend = useCallback(
     (message: string) => {
-      if (!canSend || agent.status === "running") return;
+      // Check if actually running (has active stream), not just status
+      const hasActiveStream = Boolean(agent.streamText || agent.thinkingTrace || agent.runStartedAt);
+      if (!canSend || (agent.status === "running" && hasActiveStream)) return;
       const trimmed = message.trim();
       if (!trimmed && attachedImages.length === 0 && attachedPDFs.length === 0) return;
       scrollToBottomNextOutputRef.current = true;
@@ -1204,7 +1206,11 @@ export const AgentChatPanel = ({
 
   const avatarSeed = agent.avatarSeed ?? agent.agentId;
   const running = agent.status === "running";
-  const sendDisabled = !canSend || running || !draftValue.trim();
+  // If status is "running" but there's no active stream and no recent activity, allow sending
+  // This handles cases where the status hasn't updated but streaming has actually finished
+  const hasActiveStream = Boolean(agent.streamText || agent.thinkingTrace || agent.runStartedAt);
+  const actuallyRunning = running && hasActiveStream;
+  const sendDisabled = !canSend || actuallyRunning || !draftValue.trim();
 
   const handleComposerChange = useCallback(
     (event: ChangeEvent<HTMLTextAreaElement>) => {
@@ -1386,7 +1392,7 @@ export const AgentChatPanel = ({
           onStop={onStopRun}
           canSend={canSend}
           stopBusy={stopBusy}
-          running={running}
+          running={actuallyRunning}
           sendDisabled={sendDisabled}
           attachedImages={attachedImages}
           onImageSelect={handleImageSelect}

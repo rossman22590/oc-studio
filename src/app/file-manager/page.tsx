@@ -647,11 +647,11 @@ export default function FileManagerPage() {
             </div>
           )}
 
-          <h1 className="text-2xl font-bold mb-6 console-title text-foreground">File Manager</h1>
+          <h1 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 console-title text-foreground">File Manager</h1>
           
           {/* Agent Selection */}
-          <div className="flex items-center gap-4 mb-6">
-            <label htmlFor="agent-select" className="font-medium text-sm text-muted-foreground">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 mb-4 sm:mb-6">
+            <label htmlFor="agent-select" className="font-medium text-sm text-muted-foreground shrink-0">
               Agent:
             </label>
             <select
@@ -662,7 +662,7 @@ export default function FileManagerPage() {
                 setCurrentPath('');
               }}
               disabled={status !== 'connected'}
-              className="px-4 py-2 border border-primary/50 rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:border-primary/70 transition-colors"
+              className="w-full sm:w-auto flex-1 sm:flex-none px-4 py-2.5 border border-primary/50 rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:border-primary/70 transition-colors min-h-[44px]"
             >
               <option value="">
                 {status !== 'connected' ? 'Connect to gateway first...' : 'Choose an agent...'}
@@ -677,7 +677,7 @@ export default function FileManagerPage() {
 
           {/* Search Bar and Refresh */}
           {selectedAgent && (
-            <div className="flex items-center gap-3 mb-6">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 mb-4 sm:mb-6">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
                 <input
@@ -685,49 +685,56 @@ export default function FileManagerPage() {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search files and folders..."
-                  className="w-full pl-10 pr-4 py-3 border border-primary/50 rounded-lg bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring shadow-sm hover:border-primary/70 transition-colors"
+                  className="w-full pl-10 pr-4 py-3 border border-primary/50 rounded-lg bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring shadow-sm hover:border-primary/70 transition-colors min-h-[44px]"
                 />
               </div>
-              <button
-                onClick={() => loadFiles(selectedAgent, currentPath)}
-                disabled={loading}
-                className="flex items-center gap-2 px-4 py-3 bg-primary/10 hover:bg-primary/20 border border-primary/50 rounded-lg text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
-              >
-                <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
-                Refresh
-              </button>
-              {/* Upload button */}
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                className="flex items-center gap-2 px-4 py-3 bg-primary/10 hover:bg-primary/20 border border-primary/50 rounded-lg text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
-                aria-label="Upload files"
-                tabIndex={0}
-              >
-                {uploading ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <Upload className="w-5 h-5" />
-                )}
-                {uploading ? 'Uploading…' : 'Upload'}
-              </button>
-              {/* Download All button */}
-              <button
-                onClick={() => void handleDownloadAll()}
-                disabled={downloadingAll || !selectedAgent}
-                className="flex items-center gap-2 px-4 py-3 bg-primary/10 hover:bg-primary/20 border border-primary/50 rounded-lg text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
-                aria-label="Download all files"
-                tabIndex={0}
-              >
-                {downloadingAll ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <DownloadCloud className="w-5 h-5" />
-                )}
-                {downloadingAll 
-                  ? `Downloading… ${downloadProgress.current}/${downloadProgress.total}`
-                  : 'Download All'}
-              </button>
+              <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+                <button
+                  onClick={() => loadFiles(selectedAgent, currentPath)}
+                  disabled={loading}
+                  className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 sm:py-3 bg-primary/10 hover:bg-primary/20 border border-primary/50 rounded-lg text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium min-h-[44px] flex-1 sm:flex-none"
+                  title="Refresh"
+                >
+                  <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
+                  <span className="hidden sm:inline">Refresh</span>
+                </button>
+                {/* Upload button */}
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 sm:py-3 bg-primary/10 hover:bg-primary/20 border border-primary/50 rounded-lg text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium min-h-[44px] flex-1 sm:flex-none"
+                  aria-label="Upload files"
+                  title="Upload files"
+                  tabIndex={0}
+                >
+                  {uploading ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <Upload className="w-5 h-5" />
+                  )}
+                  <span className="hidden sm:inline">{uploading ? 'Uploading…' : 'Upload'}</span>
+                </button>
+                {/* Download All button */}
+                <button
+                  onClick={() => void handleDownloadAll()}
+                  disabled={downloadingAll || !selectedAgent}
+                  className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 sm:py-3 bg-primary/10 hover:bg-primary/20 border border-primary/50 rounded-lg text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium min-h-[44px] flex-1 sm:flex-none"
+                  aria-label="Download all files"
+                  title="Download all files"
+                  tabIndex={0}
+                >
+                  {downloadingAll ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <DownloadCloud className="w-5 h-5" />
+                  )}
+                  <span className="hidden sm:inline">
+                    {downloadingAll 
+                      ? `Downloading… ${downloadProgress.current}/${downloadProgress.total}`
+                      : 'Download All'}
+                  </span>
+                </button>
+              </div>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -744,27 +751,29 @@ export default function FileManagerPage() {
 
           {/* Breadcrumb Navigation */}
           {selectedAgent && (
-            <div className="mb-4 rounded-md border border-border/80 bg-muted/30 px-4 py-2">
-              <div className="flex items-center gap-2 text-sm">
+            <div className="mb-4 rounded-md border border-border/80 bg-muted/30 px-3 sm:px-4 py-2 overflow-x-auto">
+              <div className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm min-w-max">
                 {currentPath && (
                   <button
                     onClick={goUp}
-                    className="flex items-center gap-1 px-3 py-1.5 rounded bg-primary/10 hover:bg-primary/20 text-primary transition-colors font-medium"
+                    className="flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded bg-primary/10 hover:bg-primary/20 text-primary transition-colors font-medium min-h-[44px] shrink-0"
+                    title="Go up"
                   >
                     <ArrowLeft className="w-4 h-4" />
-                    Up
+                    <span className="hidden sm:inline">Up</span>
                   </button>
                 )}
-                <span className="text-muted-foreground">workspace-{selectedAgent}</span>
+                <span className="text-muted-foreground shrink-0">workspace-{selectedAgent}</span>
                 {pathParts.map((part, i) => (
-                  <div key={i} className="flex items-center gap-2">
-                    <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                  <div key={i} className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                    <ChevronRight className="w-3 h-3 sm:w-4 sm:h-4 text-muted-foreground" />
                     <button
                       onClick={() => {
                         const newPath = pathParts.slice(0, i + 1).join('/');
                         setCurrentPath(newPath);
                       }}
-                      className="hover:text-primary transition-colors font-medium"
+                      className="hover:text-primary transition-colors font-medium truncate max-w-[120px] sm:max-w-none"
+                      title={part}
                     >
                       {part}
                     </button>
@@ -820,24 +829,24 @@ export default function FileManagerPage() {
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-3 sm:gap-4">
               {filteredFiles.map((file, index) => (
                 <div
                   key={index}
                   onClick={() => handleFileClick(file)}
-                  className="group relative flex flex-col items-center p-4 rounded-lg border border-border/50 bg-card hover:bg-primary/5 hover:border-primary/50 cursor-pointer transition-all hover:shadow-lg hover:shadow-primary/10"
+                  className="group relative flex flex-col items-center p-3 sm:p-4 rounded-lg border border-border/50 bg-card hover:bg-primary/5 hover:border-primary/50 cursor-pointer transition-all hover:shadow-lg hover:shadow-primary/10 active:scale-95 min-h-[100px] sm:min-h-[120px]"
                 >
                   {/* File Icon */}
-                  <div className="mb-3">
+                  <div className="mb-2 sm:mb-3">
                     {file.isDirectory ? (
-                      <FolderOpen className="w-12 h-12 text-primary" />
+                      <FolderOpen className="w-10 h-10 sm:w-12 sm:h-12 text-primary" />
                     ) : (
-                      <FileText className="w-12 h-12 text-gray-500" />
+                      <FileText className="w-10 h-10 sm:w-12 sm:h-12 text-gray-500" />
                     )}
                   </div>
 
                   {/* File Name */}
-                  <p className="text-sm text-center break-words w-full line-clamp-2 mb-2">
+                  <p className="text-xs sm:text-sm text-center break-words w-full line-clamp-2 mb-1 sm:mb-2 px-1">
                     {file.name}
                   </p>
 
@@ -883,7 +892,7 @@ export default function FileManagerPage() {
 
       {/* Upload results toast */}
       {showUploadResults && uploadResults.length > 0 && (
-        <div className="fixed bottom-6 right-6 z-[60] w-80 rounded-lg border border-border bg-card shadow-2xl overflow-hidden animate-scale-in">
+        <div className="fixed bottom-4 left-4 right-4 sm:bottom-6 sm:right-6 sm:left-auto z-[60] w-auto sm:w-80 rounded-lg border border-border bg-card shadow-2xl overflow-hidden animate-scale-in">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border/50 bg-muted/30">
             <span className="text-sm font-semibold text-foreground">
               Upload {uploading ? 'in progress…' : 'complete'}
@@ -926,8 +935,8 @@ export default function FileManagerPage() {
 
       {/* File Preview / Edit Modal */}
       {preview && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
-          <div className="relative w-full max-w-5xl max-h-[90vh] m-4 rounded-lg border border-border bg-card shadow-2xl flex flex-col">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-2 sm:p-4">
+          <div className="relative w-full max-w-5xl max-h-[95vh] sm:max-h-[90vh] rounded-lg border border-border bg-card shadow-2xl flex flex-col">
             {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-border/80">
               <div className="flex items-center gap-3">

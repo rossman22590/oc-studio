@@ -64,6 +64,7 @@ import { applySessionSettingMutation } from "@/features/agents/state/sessionSett
 import {
   parseAgentIdFromSessionKey,
   isGatewayDisconnectLikeError,
+  syncGatewaySessionSettings,
   type EventFrame,
 } from "@/lib/gateway/GatewayClient";
 import { fetchJson } from "@/lib/http";
@@ -164,16 +165,55 @@ const findLatestHeartbeatResponse = (messages: ChatHistoryMessage[]) => {
   return latestResponse;
 };
 
+// Track used "New Agent X" names in localStorage so we don't reuse them after rename
+const STORAGE_KEY_USED_AGENT_NAMES = "openclaw.used-agent-names";
+
+const loadUsedAgentNames = (): Set<string> => {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_USED_AGENT_NAMES);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw) as string[];
+    return new Set(parsed.map((name) => name.trim().toLowerCase()).filter((name) => name.length > 0));
+  } catch {
+    return new Set();
+  }
+};
+
+const saveUsedAgentName = (name: string): void => {
+  if (typeof window === "undefined") return;
+  try {
+    const used = loadUsedAgentNames();
+    const normalized = name.trim().toLowerCase();
+    if (!normalized) return;
+    used.add(normalized);
+    localStorage.setItem(STORAGE_KEY_USED_AGENT_NAMES, JSON.stringify(Array.from(used)));
+  } catch (err) {
+    console.warn("Failed to save used agent name:", err);
+  }
+};
+
 const resolveNextNewAgentName = (agents: AgentState[]) => {
   const baseName = "New Agent";
-  const existing = new Set(
+  const currentNames = new Set(
     agents.map((agent) => agent.name.trim().toLowerCase()).filter((name) => name.length > 0)
   );
+  const usedNames = loadUsedAgentNames();
+  // Combine current names and historically used names
+  const allUsed = new Set([...currentNames, ...usedNames]);
+  
   const baseLower = baseName.toLowerCase();
-  if (!existing.has(baseLower)) return baseName;
+  if (!allUsed.has(baseLower)) {
+    saveUsedAgentName(baseName);
+    return baseName;
+  }
   for (let index = 2; index < 10000; index += 1) {
     const candidate = `${baseName} ${index}`;
-    if (!existing.has(candidate.toLowerCase())) return candidate;
+    const candidateLower = candidate.toLowerCase();
+    if (!allUsed.has(candidateLower)) {
+      saveUsedAgentName(candidate);
+      return candidate;
+    }
   }
   throw new Error("Unable to allocate a unique agent name.");
 };
@@ -245,7 +285,89 @@ const AgentStudioPage = () => {
   const [brainPanelOpen, setBrainPanelOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [deleteAgentBlock, setDeleteAgentBlock] = useState<DeleteAgentBlockState | null>(null);
-  const [createAgentBlock, setCreateAgentBlock] = useState<CreateAgentBlockState | null>(null);
+  // Persist createAgentBlock to localStorage so it survives page refresh
+  const STORAGE_KEY_CREATE_AGENT_BLOCK = "openclaw.create-agent-block";
+  const loadCreateAgentBlock = (): CreateAgentBlockState | null => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY_CREATE_AGENT_BLOCK);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as CreateAgentBlockState;
+      // Only restore if it's not too old (more than 5 minutes = likely stale)
+      const age = Date.now() - parsed.startedAt;
+      if (age > 5 * 60 * 1000) {
+        localStorage.removeItem(STORAGE_KEY_CREATE_AGENT_BLOCK);
+        return null;
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
+  };
+  const saveCreateAgentBlock = (block: CreateAgentBlockState | null): void => {
+    if (typeof window === "undefined") return;
+    try {
+      if (block) {
+        localStorage.setItem(STORAGE_KEY_CREATE_AGENT_BLOCK, JSON.stringify(block));
+      } else {
+        localStorage.removeItem(STORAGE_KEY_CREATE_AGENT_BLOCK);
+      }
+    } catch (err) {
+      console.warn("Failed to save create agent block:", err);
+    }
+  };
+  
+  const [createAgentBlock, setCreateAgentBlock] = useState<CreateAgentBlockState | null>(() => loadCreateAgentBlock());
+  
+  // Save to localStorage whenever createAgentBlock changes
+  useEffect(() => {
+    saveCreateAgentBlock(createAgentBlock);
+  }, [createAgentBlock]);
+  
+  // On page load, check if agent was already created (auto-unlock after refresh)
+  useEffect(() => {
+    if (!createAgentBlock) return;
+    if (createAgentBlock.phase === "queued") return;
+    if (status !== "connected") return;
+    if (!agentsLoadedOnce) return; // Wait for agents to load first
+    
+    // If we have an agentId and we're connected, check if the agent exists
+    const agentId = createAgentBlock.agentId?.trim();
+    if (agentId) {
+      const agentExists = state.agents.some((a) => a.agentId === agentId);
+      if (agentExists && createAgentBlock.phase === "awaiting-restart") {
+        // Agent exists and we're connected - restart completed, finish setup
+        const finalize = async () => {
+          try {
+            await initializeAgentWorkspace({ client, agentId });
+            await bootstrapAgentBrainFilesFromTemplate({ client, agentId });
+            const DEFAULT_GW_URL =
+              process.env.NEXT_PUBLIC_GATEWAY_URL ?? "ws://127.0.0.1:18789";
+            const gwUrl =
+              typeof window !== "undefined"
+                ? localStorage.getItem("openclaw.gateway.url")?.trim() || DEFAULT_GW_URL
+                : DEFAULT_GW_URL;
+            try {
+              await fetch(
+                `/api/gateway/workspace-files?agentId=${encodeURIComponent(agentId)}&path=&gatewayUrl=${encodeURIComponent(gwUrl)}`
+              );
+            } catch {
+              // Non-critical
+            }
+          } catch (err) {
+            console.error("Failed to bootstrap agent after refresh:", err);
+          }
+          setCreateAgentBlock(null);
+          dispatch({ type: "selectAgent", agentId });
+          setMobilePane("chat");
+        };
+        void finalize();
+      } else if (!agentExists && createAgentBlock.phase === "awaiting-restart") {
+        // Agent doesn't exist yet - might still be restarting, keep waiting
+        // The existing restart detection logic will handle this
+      }
+    }
+  }, [createAgentBlock, status, state.agents, agentsLoadedOnce, client, dispatch]);
   const [renameAgentBlock, setRenameAgentBlock] = useState<RenameAgentBlockState | null>(null);
   const specialUpdateRef = useRef<Map<string, string>>(new Map());
   const specialUpdateInFlightRef = useRef<Set<string>>(new Set());
@@ -1540,14 +1662,79 @@ const AgentStudioPage = () => {
     [dispatch]
   );
 
+  const handleUpdateExecutionRole = useCallback(
+    async (agentId: string, role: "conservative" | "collaborative" | "autonomous") => {
+      const agent = agents.find((entry) => entry.agentId === agentId);
+      if (!agent || !agent.sessionKey) return;
+
+      // Map execution role to execSecurity and execAsk values
+      let execSecurity: "deny" | "allowlist" | "full" | null;
+      let execAsk: "off" | "on-miss" | "always" | null;
+
+      if (role === "conservative") {
+        execSecurity = "deny";
+        execAsk = "always";
+      } else if (role === "collaborative") {
+        execSecurity = "allowlist";
+        execAsk = "always";
+      } else {
+        // autonomous
+        execSecurity = "full";
+        execAsk = "off";
+      }
+
+      try {
+        // Update session settings via gateway
+        await syncGatewaySessionSettings({
+          client,
+          sessionKey: agent.sessionKey,
+          execSecurity,
+          execAsk,
+        });
+
+        // Update local agent state
+        dispatch({
+          type: "updateAgent",
+          agentId,
+          patch: {
+            sessionExecSecurity: execSecurity,
+            sessionExecAsk: execAsk,
+            sessionSettingsSynced: true,
+          },
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to update execution role.";
+        throw new Error(message);
+      }
+    },
+    [agents, client, dispatch]
+  );
+
+  const handleLoadMoreHistory = useCallback(
+    (agentId: string) => {
+      void loadAgentHistory(agentId);
+    },
+    [loadAgentHistory]
+  );
+
+  const requestHistoryRefresh = useCallback(
+    async (command: { agentId: string; reason: "chat-final-no-trace" }) => {
+      void loadAgentHistory(command.agentId);
+    },
+    [loadAgentHistory]
+  );
+
   useEffect(() => {
     const handler = createGatewayRuntimeEventHandler({
       getStatus: () => status,
       getAgents: () => stateRef.current.agents,
       dispatch,
       queueLivePatch,
+      clearPendingLivePatch: (agentId: string) => {
+        pendingLivePatchesRef.current.delete(agentId.trim());
+      },
       loadSummarySnapshot,
-      loadAgentHistory,
+      requestHistoryRefresh,
       refreshHeartbeatLatestUpdate,
       bumpHeartbeatTick: () => setHeartbeatTick((prev) => prev + 1),
       setTimeout: (fn, delayMs) => window.setTimeout(fn, delayMs),
@@ -1603,7 +1790,6 @@ const AgentStudioPage = () => {
               client,
               agentId,
               name,
-              sessionKey: agent.sessionKey,
             });
             dispatch({
               type: "updateAgent",
@@ -1744,7 +1930,7 @@ const AgentStudioPage = () => {
                 
             </div>
             <div className="mt-3 text-sm text-muted-foreground">
-              {status === "connecting" ? "Connecting to gatewayΓÇª" : "Loading agentsΓÇª"}
+              {status === "connecting" ? "Connecting to gateway…" : "Loading agents…"}
             </div>
           </div>
         </div>
@@ -1757,7 +1943,7 @@ const AgentStudioPage = () => {
       {state.loading ? (
         <div className="pointer-events-none fixed bottom-4 left-0 right-0 z-50 flex justify-center px-3">
           <div className="glass-panel px-6 py-3 font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-            Loading agentsΓÇª
+            Loading agents…
           </div>
         </div>
       ) : null}
@@ -1884,6 +2070,7 @@ const AgentStudioPage = () => {
                   handleStopRun(focusedAgent.agentId, focusedAgent.sessionKey)
                 }
                 onAvatarShuffle={() => handleAvatarShuffle(focusedAgent.agentId)}
+                onLoadMoreHistory={() => handleLoadMoreHistory(focusedAgent.agentId)}
               />
             ) : (
               <EmptyStatePanel
@@ -1933,6 +2120,9 @@ const AgentStudioPage = () => {
                   }
                   onThinkingTracesToggle={(enabled) =>
                     handleThinkingTracesToggle(settingsAgent.agentId, enabled)
+                  }
+                  onUpdateExecutionRole={(role) =>
+                    handleUpdateExecutionRole(settingsAgent.agentId, role)
                   }
                   cronJobs={settingsCronJobs}
                   cronLoading={settingsCronLoading}

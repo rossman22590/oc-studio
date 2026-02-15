@@ -58,7 +58,7 @@ export const LandingPage = () => {
   }
 
   return (
-    <div className="w-full overflow-x-hidden">
+    <div className="w-full overflow-x-hidden bg-background dark:bg-black">
       <Navigation status={status} onConnectClick={handleConnectClick} />
       <Hero status={status} onConnectClick={handleConnectClick} />
       <Stats />

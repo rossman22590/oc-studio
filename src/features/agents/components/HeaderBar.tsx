@@ -73,7 +73,6 @@ export const HeaderBar = ({
   onBrainFiles,
   brainFilesOpen,
   brainDisabled = false,
-<<<<<<< HEAD
   showFilesButton = true,
   showHomeButton = false,
   showSwarmButton = true,
@@ -89,6 +88,7 @@ export const HeaderBar = ({
   onToggleSidebar,
   rightPanelOpen = false,
   onCloseRightPanel,
+  showConnectionSettings = true,
 }: HeaderBarProps) => {
   const [selectedAccentId, setSelectedAccentId] = useState<string | null>(null);
   const [accentReady, setAccentReady] = useState(false);
@@ -123,32 +123,29 @@ export const HeaderBar = ({
   }, [accentReady, selectedAccentId]);
 
   return (
-    <div className="glass-panel fade-up relative z-[120] overflow-visible px-4 py-2">
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(120deg,transparent_0%,color-mix(in_oklch,var(--primary)_7%,transparent)_48%,transparent_100%)] opacity-55" />
-      <div className="relative grid items-center gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
-        <div className="min-w-0 flex items-center gap-2">
-          <Link href="/" className="inline-flex items-center gap-2 hover:opacity-80 transition-opacity shrink-0">
-            <img src="/logo.png" alt="MachineClaw" className="h-8 w-8 sm:h-10 sm:w-10" />
-            <p className="console-title text-2xl leading-none text-foreground sm:text-3xl">
-              MachineClaw
-            </p>
+    <div className="glass-panel fade-up relative z-[120] overflow-visible px-2 sm:px-4 py-2">
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(120deg,transparent_0%,color-mix(in_oklch,var(--primary)_7%,transparent)_48%,transparent_100%)] opacity-55 dark:opacity-30" />
+      <div className="relative grid items-center gap-2 sm:gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
+        <div className="min-w-0 flex items-center gap-1.5 sm:gap-2">
+          <Link href="/" className="inline-flex items-center gap-1.5 sm:gap-2 hover:opacity-80 transition-opacity shrink-0">
+            <img src="/logo.png" alt="MachineClaw" className="h-7 w-7 sm:h-8 sm:w-8 md:h-10 md:w-10" />
           </Link>
         </div>
 
-        <div className="flex items-center justify-end gap-2">
+        <div className="flex items-center justify-end gap-1 sm:gap-2 flex-wrap">
           {/* Sidebar toggle — desktop only */}
           {onToggleSidebar ? (
             <button
               type="button"
               onClick={onToggleSidebar}
-              className="hidden xl:flex items-center gap-1.5 rounded-md border border-input/90 bg-background/75 px-2.5 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-foreground transition hover:border-ring hover:bg-card"
+              className="hidden xl:flex items-center gap-1.5 rounded-md border border-input/90 bg-background/75 dark:bg-background/90 px-2.5 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-foreground dark:text-white transition hover:border-ring hover:bg-card"
               title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
               data-testid="sidebar-toggle"
             >
               {sidebarCollapsed ? (
-                <PanelLeftOpen className="h-4 w-4" />
+                <PanelLeftOpen className="h-4 w-4 text-foreground dark:text-white" />
               ) : (
-                <PanelLeftClose className="h-4 w-4" />
+                <PanelLeftClose className="h-4 w-4 text-foreground dark:text-white" />
               )}
             </button>
           ) : null}
@@ -157,23 +154,23 @@ export const HeaderBar = ({
             <button
               type="button"
               onClick={onCloseRightPanel}
-              className="hidden xl:flex items-center gap-1.5 rounded-md border border-input/90 bg-background/75 px-2.5 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-foreground transition hover:border-ring hover:bg-card"
+              className="hidden xl:flex items-center gap-1.5 rounded-md border border-input/90 bg-background/75 dark:bg-background/90 px-2.5 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-foreground dark:text-white transition hover:border-ring hover:bg-card"
               title="Close side panel"
               data-testid="close-right-panel"
             >
-              <PanelRightClose className="h-4 w-4" />
+              <PanelRightClose className="h-4 w-4 text-foreground dark:text-white" />
             </button>
           ) : null}
           {status === "connecting" ? (
             <span
-              className="inline-flex items-center rounded-md border border-border/70 bg-secondary px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.15em] text-secondary-foreground"
+              className="inline-flex items-center rounded-md border border-border/70 dark:border-white/20 bg-secondary dark:bg-secondary/80 px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.15em] text-secondary-foreground dark:text-white"
               data-testid="gateway-connecting-indicator"
             >
               Connecting
             </span>
           ) : null}
           <button
-            className={`flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] transition ${
+            className={`flex items-center gap-1.5 sm:gap-2 rounded-md border px-2 sm:px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] transition min-h-[44px] min-w-[44px] sm:min-w-0 ${
               status === "connected"
                 ? "border-green-500/50 bg-green-500/15 text-foreground hover:border-green-500 hover:bg-green-500/20"
                 : "border-input/90 bg-background/75 text-foreground hover:border-ring hover:bg-card"
@@ -181,110 +178,127 @@ export const HeaderBar = ({
             type="button"
             onClick={onConnectionSettings}
             data-testid="connect-button"
+            title={status === "connected" ? "Connected" : "Connect"}
           >
             {status === "connected" ? (
               <>
                 <span className="h-2.5 w-2.5 rounded-full bg-green-500 animate-pulse" />
-                Connected
+                <span className="hidden sm:inline">Connected</span>
               </>
             ) : (
               <>
                 <Cable className="h-4 w-4" />
-                Connect
+                <span className="hidden sm:inline">Connect</span>
               </>
             )}
           </button>
           {showHomeButton && (
             <Link
               href="/"
-              className="flex items-center gap-2 rounded-md border border-input/90 bg-background/75 px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-foreground transition hover:border-ring hover:bg-card"
+              className="flex items-center justify-center gap-1.5 sm:gap-2 rounded-md border border-input/90 bg-background/75 dark:bg-background/90 px-2 sm:px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-foreground dark:text-white transition hover:border-ring hover:bg-card min-h-[44px] min-w-[44px] sm:min-w-0"
               data-testid="home-link"
+              title="Home"
             >
-              <Home className="h-4 w-4" />
-              Home
+              <Home className="h-4 w-4 text-foreground dark:text-white" />
+              <span className="hidden sm:inline">Home</span>
             </Link>
           )}
           {showFilesButton && (
             <Link
               href="/file-manager"
-              className="flex items-center gap-2 rounded-md border border-input/90 bg-background/75 px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-foreground transition hover:border-ring hover:bg-card"
+              className="flex items-center justify-center gap-1.5 sm:gap-2 rounded-md border border-input/90 bg-background/75 dark:bg-background/90 px-2 sm:px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-foreground dark:text-white transition hover:border-ring hover:bg-card min-h-[44px] min-w-[44px] sm:min-w-0"
               data-testid="file-manager-link"
+              title="Files"
             >
-              <FolderOpen className="h-4 w-4" />
-              Files
+              <FolderOpen className="h-4 w-4 text-foreground dark:text-white" />
+              <span className="hidden sm:inline">Files</span>
             </Link>
           )}
           <Link
-            href="/agent-office"
-            className="flex items-center gap-2 rounded-md border border-input/90 bg-background/75 px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-foreground transition hover:border-ring hover:bg-card"
-            data-testid="agent-office-link"
+            href="/studio"
+            className="flex items-center justify-center gap-1.5 sm:gap-2 rounded-md border border-input/90 bg-background/75 dark:bg-background/90 px-2 sm:px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-foreground dark:text-white transition hover:border-ring hover:bg-card min-h-[44px] min-w-[44px] sm:min-w-0"
+            data-testid="studio-link"
+            title="Studio"
           >
-            <Box className="h-4 w-4" />
-            Office
+            <Home className="h-4 w-4 text-foreground dark:text-white" />
+            <span className="hidden sm:inline">Studio</span>
+          </Link>
+          <Link
+            href="/agent-office"
+            className="hidden md:flex items-center justify-center gap-1.5 sm:gap-2 rounded-md border border-input/90 bg-background/75 dark:bg-background/90 px-2 sm:px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-foreground dark:text-white transition hover:border-ring hover:bg-card min-h-[44px] min-w-[44px] sm:min-w-0"
+            data-testid="agent-office-link"
+            title="Office"
+          >
+            <Box className="h-4 w-4 text-foreground dark:text-white" />
+            <span className="hidden sm:inline">Office</span>
           </Link>
           {showChatroomButton && onChatroom ? (
             <button
-              className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex items-center justify-center gap-1.5 sm:gap-2 rounded-md border border-primary/50 bg-white dark:bg-primary/20 px-2 sm:px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary dark:text-white transition hover:border-primary hover:bg-primary hover:text-white disabled:opacity-40 disabled:cursor-not-allowed min-h-[44px] min-w-[44px] sm:min-w-0"
               type="button"
               onClick={onChatroom}
               data-testid="chatroom-button"
               disabled={chatroomDisabled}
               aria-label="Open chatroom"
+              title="Chat"
               tabIndex={0}
             >
-              <MessageSquare className="h-4 w-4" />
-              Chat
+              <MessageSquare className="h-4 w-4 text-primary dark:text-white" />
+              <span className="hidden sm:inline">Chat</span>
             </button>
           ) : null}
           {showKanbanButton && onKanban ? (
             <button
-              className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex items-center justify-center gap-1.5 sm:gap-2 rounded-md border border-primary/50 bg-white dark:bg-primary/20 px-2 sm:px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary dark:text-white transition hover:border-primary hover:bg-primary hover:text-white disabled:opacity-40 disabled:cursor-not-allowed min-h-[44px] min-w-[44px] sm:min-w-0"
               type="button"
               onClick={onKanban}
               data-testid="kanban-button"
               disabled={kanbanDisabled}
               aria-label="Open kanban board"
+              title="Kanban"
               tabIndex={0}
             >
-              <LayoutGrid className="h-4 w-4" />
-              Kanban
+              <LayoutGrid className="h-4 w-4 text-primary dark:text-white" />
+              <span className="hidden sm:inline">Kanban</span>
             </button>
           ) : null}
           {showSwarmButton && onSwarm ? (
             <button
-              className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex items-center justify-center gap-1.5 sm:gap-2 rounded-md border border-primary/50 bg-white dark:bg-primary/20 px-2 sm:px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary dark:text-white transition hover:border-primary hover:bg-primary hover:text-white disabled:opacity-40 disabled:cursor-not-allowed min-h-[44px] min-w-[44px] sm:min-w-0"
               type="button"
               onClick={onSwarm}
               data-testid="swarm-dispatch-button"
               disabled={swarmDisabled}
+              title="Swarm"
             >
-              <Zap className="h-4 w-4" />
-              Swarm
+              <Zap className="h-4 w-4 text-primary dark:text-white" />
+              <span className="hidden sm:inline">Swarm</span>
             </button>
           ) : null}
           <button
-            className={`flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] transition ${
+            className={`flex items-center justify-center gap-1.5 sm:gap-2 rounded-md border px-2 sm:px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] transition min-h-[44px] min-w-[44px] sm:min-w-0 ${
               brainFilesOpen
-                ? "border-border bg-surface-2 text-foreground"
-                : "border-input/90 bg-surface-3 text-foreground hover:border-border hover:bg-surface-2"
+                ? "border-border bg-surface-2 text-foreground dark:text-white"
+                : "border-input/90 bg-surface-3 dark:bg-background/90 text-foreground dark:text-white hover:border-border hover:bg-surface-2"
             }`}
             type="button"
             onClick={onBrainFiles}
             data-testid="brain-files-toggle"
             disabled={brainDisabled}
+            title="Brain"
           >
-            <Brain className="h-4 w-4" />
-            Brain
+            <Brain className="h-4 w-4 text-foreground dark:text-white" />
+            <span className="hidden sm:inline">Brain</span>
           </button>
           <details className="group relative">
             <summary
-              className="flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-md border border-input/80 bg-background/70 text-muted-foreground transition hover:border-ring hover:bg-card hover:text-foreground [&::-webkit-details-marker]:hidden"
+              className="flex h-11 w-11 sm:h-9 sm:w-9 cursor-pointer list-none items-center justify-center rounded-md border border-input/80 bg-background/70 dark:bg-background/90 text-muted-foreground dark:text-white transition hover:border-ring hover:bg-card hover:text-foreground [&::-webkit-details-marker]:hidden"
               data-testid="studio-menu-toggle"
             >
-              <Ellipsis className="h-4 w-4" />
+              <Ellipsis className="h-4 w-4 text-muted-foreground dark:text-white" />
               <span className="sr-only">Open studio menu</span>
             </summary>
-            <div className="absolute right-0 top-11 z-[220] min-w-44 rounded-md border border-border/80 bg-popover/95 p-1 shadow-lg backdrop-blur">
+            <div className="absolute right-0 top-12 sm:top-11 z-[220] min-w-44 sm:min-w-44 w-[calc(100vw-2rem)] sm:w-auto max-w-[90vw] rounded-md border border-border/80 bg-popover/95 p-1 shadow-lg backdrop-blur">
               {showConnectionSettings ? (
                 <button
                   className="w-full rounded-sm px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.1em] text-foreground transition hover:bg-muted"
