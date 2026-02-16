@@ -24,6 +24,7 @@
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",
     "@vercel/otel": "^2.1.0",
+    "ably": "^2.17.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "form-data": "^4.0.5",
@@ -37,8 +38,8 @@
     "react-mentions-ts": "^5.4.7",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.4.0",
-    "ws": "^8.18.3",
-    "three": "^0.182.0"
+    "three": "^0.182.0",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.0",

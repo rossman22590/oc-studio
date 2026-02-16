@@ -25,6 +25,9 @@ import { ChatroomModal } from "@/features/agents/components/ChatroomModal";
 import { KanbanBoardModal, loadKanbanCards, saveKanbanCards, useKanbanAutoComplete, type KanbanCard } from "@/features/agents/components/KanbanBoardModal";
 import Link from "next/link";
 import { Home, Cable, Volume2, Volume1, VolumeX, Zap, MessageSquare, SkipForward, Plus, Minus, LayoutGrid } from "lucide-react";
+import { ShareButton } from "./office3d/ShareButton";
+import { GuestPlayer } from "./office3d/GuestPlayer";
+import { usePositionSync } from "./office3d/usePositionSync";
 
 export type AgentBoxData = {
   id: string;
@@ -37,7 +40,15 @@ export type AgentBoxData = {
   outputLineCount: number;
 };
 
-export const AgentOfficeScene = () => {
+type AgentOfficeSceneProps = {
+  isGuest?: boolean;
+  shareToken?: string | null;
+  guestColor?: string;
+};
+
+const OWNER_SHARE_TOKEN_STORAGE_KEY = "oc-office-share-token";
+
+export const AgentOfficeScene = ({ isGuest = false, shareToken = null, guestColor = "#6366f1" }: AgentOfficeSceneProps) => {
   const { state, hydrateAgents, setLoading, setError, dispatch } = useAgentStore();
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [chatModalOpen, setChatModalOpen] = useState(false);
@@ -52,6 +63,63 @@ export const AgentOfficeScene = () => {
   const [tvVolume, setTvVolume] = useState(50);
   const [tvSkipSignal, setTvSkipSignal] = useState(0);
   const historyInFlightRef = useRef<Set<string>>(new Set());
+
+  // Multiplayer: generate a stable userId for this session
+  const userIdRef = useRef<string>("");
+  if (!userIdRef.current) {
+    userIdRef.current = `${isGuest ? "guest" : "owner"}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+
+  // Owner/guest active share token for multiplayer sync.
+  // - Guests get it from URL param.
+  // - Owners get it from generated link and persist in sessionStorage.
+  const [ownerShareToken, setOwnerShareToken] = useState<string | null>(shareToken);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    // Guest always trusts URL token.
+    if (isGuest) return;
+    // Owner bootstraps from session storage if no token currently set.
+    if (ownerShareToken) return;
+    const stored = window.sessionStorage.getItem(OWNER_SHARE_TOKEN_STORAGE_KEY);
+    if (stored) {
+      setOwnerShareToken(stored);
+    }
+  }, [isGuest, ownerShareToken]);
+
+  const handleOwnerTokenGenerated = useCallback((token: string) => {
+    setOwnerShareToken(token);
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem(OWNER_SHARE_TOKEN_STORAGE_KEY, token);
+    }
+  }, []);
+
+  const handleOwnerTokenRevoked = useCallback(() => {
+    setOwnerShareToken(null);
+    if (typeof window !== "undefined") {
+      window.sessionStorage.removeItem(OWNER_SHARE_TOKEN_STORAGE_KEY);
+    }
+  }, []);
+
+  // Position sync hook — single POST sends our position AND receives all players
+  // Owner uses default model color (no tint), guest uses their chosen color
+  const { players: remotePlayers, connected: syncConnected, sendPosition, debug: syncDebug } = usePositionSync({
+    token: ownerShareToken,
+    userId: userIdRef.current,
+    role: isGuest ? "guest" : "owner",
+    color: isGuest ? guestColor : "#888888", // Owner uses neutral gray for sync (not applied to model)
+    enabled: !!ownerShareToken,
+    syncIntervalMs: 100,
+  });
+
+  // Callback for RobotExpressivePlayer to report position changes
+  // sendPosition just stores the latest position in a ref — the sync loop picks it up
+  const handlePositionChange = useCallback(
+    (position: [number, number, number], rotation: number, animation: string) => {
+      sendPosition(position, rotation, animation);
+    },
+    [sendPosition]
+  );
   
   const settingsCoordinator = createStudioSettingsCoordinator();
   const { client, status, gatewayUrl } = useGatewayConnection(settingsCoordinator);
@@ -353,43 +421,84 @@ export const AgentOfficeScene = () => {
           <Home className="h-4 w-4" />
           Home
         </Link>
-        <button
-          onClick={() => setChatroomOpen(true)}
-          disabled={status !== "connected" || state.agents.length === 0}
-          className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 backdrop-blur-sm px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary hover:text-white shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
-          title="Open agent chatroom"
-          aria-label="Open chatroom"
-          tabIndex={0}
-        >
-          <MessageSquare className="h-4 w-4" />
-          Chat
-        </button>
-        <button
-          onClick={() => setSwarmModalOpen(true)}
-          disabled={status !== "connected" || state.agents.length === 0}
-          className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 backdrop-blur-sm px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary hover:text-white shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
-          title="Dispatch tasks to all agents"
-        >
-          <Zap className="h-4 w-4" />
-          Swarm
-        </button>
-        <button
-          onClick={() => setKanbanOpen(true)}
-          disabled={status !== "connected" || state.agents.length === 0}
-          className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 backdrop-blur-sm px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary hover:text-white shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
-          title="Open kanban board"
-          aria-label="Open kanban board"
-          tabIndex={0}
-        >
-          <LayoutGrid className="h-4 w-4" />
-          Kanban
-        </button>
+        {!isGuest && (
+          <>
+            <button
+              onClick={() => setChatroomOpen(true)}
+              disabled={status !== "connected" || state.agents.length === 0}
+              className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 backdrop-blur-sm px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary hover:text-white shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Open agent chatroom"
+              aria-label="Open chatroom"
+              tabIndex={0}
+            >
+              <MessageSquare className="h-4 w-4" />
+              Chat
+            </button>
+            <button
+              onClick={() => setSwarmModalOpen(true)}
+              disabled={status !== "connected" || state.agents.length === 0}
+              className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 backdrop-blur-sm px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary hover:text-white shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Dispatch tasks to all agents"
+            >
+              <Zap className="h-4 w-4" />
+              Swarm
+            </button>
+            <button
+              onClick={() => setKanbanOpen(true)}
+              disabled={status !== "connected" || state.agents.length === 0}
+              className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 backdrop-blur-sm px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary hover:text-white shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Open kanban board"
+              aria-label="Open kanban board"
+              tabIndex={0}
+            >
+              <LayoutGrid className="h-4 w-4" />
+              Kanban
+            </button>
+            <ShareButton
+              ownerId={userIdRef.current}
+              onTokenGenerated={handleOwnerTokenGenerated}
+              onTokenRevoked={handleOwnerTokenRevoked}
+            />
+          </>
+        )}
+        {isGuest && (
+          <div className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 backdrop-blur-sm px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary shadow-lg">
+            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: guestColor }} />
+            Guest Mode
+          </div>
+        )}
       </div>
 
       {/* Title overlay */}
       <div className="absolute top-4 right-4 z-10 glass-panel px-4 py-2">
-        <h1 className="console-title text-2xl text-foreground">Agent Office</h1>
+        <h1 className="console-title text-2xl text-foreground">
+          {isGuest ? "Guest View" : "Agent Office"}
+        </h1>
+        {ownerShareToken && (
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {syncConnected ? `${remotePlayers.length + 1} in office` : "Syncing..."}
+          </p>
+        )}
       </div>
+
+      {/* DEBUG PANEL - Remove after fixing */}
+      {syncDebug && (
+        <div className="absolute bottom-4 left-4 z-10 glass-panel px-3 py-2 text-xs font-mono bg-black/80 text-green-400 border border-green-500/50">
+          <div className="font-bold mb-1">DEBUG SYNC</div>
+          <div>Token: {syncDebug.token ? `${syncDebug.token.slice(0, 8)}...` : "NULL"}</div>
+          <div>UserId: {syncDebug.userId}</div>
+          <div>Remote Players: {syncDebug.remoteCount}</div>
+          <div>Connected: {syncConnected ? "YES" : "NO"}</div>
+          <div>Last Send: {syncDebug.lastSend > 0 ? `${Math.round((Date.now() - syncDebug.lastSend) / 1000)}s ago` : "never"}</div>
+          <div>Last Receive: {syncDebug.lastReceive > 0 ? `${Math.round((Date.now() - syncDebug.lastReceive) / 1000)}s ago` : "never"}</div>
+          <div>Errors: {syncDebug.errors}</div>
+          {remotePlayers.length > 0 && (
+            <div className="mt-1 pt-1 border-t border-green-500/30">
+              Players: {remotePlayers.map(p => `${p.userId}(${p.role})`).join(", ")}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* TV controls */}
       <div className="absolute top-20 right-4 z-10 flex items-center gap-2">
@@ -538,21 +647,31 @@ export const AgentOfficeScene = () => {
           <AgentBoxes
             agents={agentBoxes}
             selectedAgentId={selectedAgentId}
-            onSelectAgent={setSelectedAgentId}
-            onOpenChat={(agentId: string) => {
+            onSelectAgent={isGuest ? () => {} : setSelectedAgentId}
+            onOpenChat={isGuest ? () => {} : (agentId: string) => {
               setSelectedAgentId(agentId);
               setChatModalOpen(true);
               // Load/refresh chat history when opening modal
               void loadAgentHistory(agentId);
             }}
-            onViewDetails={(agentId: string) => {
+            onViewDetails={isGuest ? () => {} : (agentId: string) => {
               setSelectedAgentId(agentId);
               setDetailsModalOpen(true);
             }}
           />
 
           {/* RobotExpressive player character */}
-          <RobotExpressivePlayer position={[0, 0, 2]} />
+          {/* Owner: no color tint (default model colors), Guest: their chosen color */}
+          <RobotExpressivePlayer
+            position={[0, 0, 2]}
+            color={isGuest ? guestColor : undefined}
+            onPositionChange={handlePositionChange}
+          />
+
+          {/* Remote players (guests or owner, depending on perspective) */}
+          {remotePlayers.map((player) => (
+            <GuestPlayer key={player.userId} player={player} />
+          ))}
 
           {/* Camera Controls — orbit + right-drag vertical */}
           <RightDragVerticalCamera />
@@ -574,8 +693,8 @@ export const AgentOfficeScene = () => {
         </Suspense>
       </Canvas>
 
-      {/* Thought Bubble Overlay */}
-      {selectedAgent && selectedAgent.lastMessage && !chatModalOpen && (
+      {/* Thought Bubble Overlay (owner only) */}
+      {!isGuest && selectedAgent && selectedAgent.lastMessage && !chatModalOpen && (
         <ThoughtBubble
           agentName={selectedAgent.name}
           message={selectedAgent.lastMessage}
@@ -583,8 +702,8 @@ export const AgentOfficeScene = () => {
         />
       )}
 
-      {/* Chat Modal */}
-      {chatModalOpen && selectedAgent && (
+      {/* Chat Modal (owner only) */}
+      {!isGuest && chatModalOpen && selectedAgent && (
         <ChatModal
           agentId={selectedAgent.id}
           agentName={selectedAgent.name}
@@ -596,8 +715,8 @@ export const AgentOfficeScene = () => {
         />
       )}
 
-      {/* Agent Details Modal */}
-      {detailsModalOpen && selectedAgent && (
+      {/* Agent Details Modal (owner only) */}
+      {!isGuest && detailsModalOpen && selectedAgent && (
         <AgentDetailsModal
           agentId={selectedAgent.id}
           agentName={selectedAgent.name}
@@ -613,13 +732,13 @@ export const AgentOfficeScene = () => {
         />
       )}
 
-      {/* File Manager Modal */}
-      {fileManagerOpen && (
+      {/* File Manager Modal (owner only) */}
+      {!isGuest && fileManagerOpen && (
         <FileManagerModal onClose={() => setFileManagerOpen(false)} />
       )}
 
-      {/* Swarm Dispatch Modal */}
-      {swarmModalOpen && (
+      {/* Swarm Dispatch Modal (owner only) */}
+      {!isGuest && swarmModalOpen && (
         <SwarmDispatchModal
           agents={state.agents}
           onDispatch={handleSwarmDispatch}
@@ -628,16 +747,16 @@ export const AgentOfficeScene = () => {
         />
       )}
 
-      {/* Chatroom Modal */}
-      {chatroomOpen && (
+      {/* Chatroom Modal (owner only) */}
+      {!isGuest && chatroomOpen && (
         <ChatroomModal
           onClose={() => setChatroomOpen(false)}
           onSendMessage={handleSendMessage}
         />
       )}
 
-      {/* Kanban Board Modal */}
-      {kanbanOpen && (
+      {/* Kanban Board Modal (owner only) */}
+      {!isGuest && kanbanOpen && (
         <KanbanBoardModal
           onClose={() => setKanbanOpen(false)}
           onSendMessage={handleSendMessage}

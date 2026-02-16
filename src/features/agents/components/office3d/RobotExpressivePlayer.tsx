@@ -8,6 +8,14 @@ import { SkeletonUtils } from "three-stdlib";
 
 type RobotExpressivePlayerProps = {
   position?: [number, number, number];
+  /** Optional color tint for the robot (e.g. guest color). If not set, uses default model colors. */
+  color?: string | null;
+  /** Called when the player's position/rotation changes (throttled). Used for multiplayer sync. */
+  onPositionChange?: (
+    position: [number, number, number],
+    rotation: number,
+    animation: string
+  ) => void;
 };
 
 const states = ["Idle", "Walking", "Running", "Dance", "Death", "Sitting", "Standing"] as const;
@@ -116,7 +124,7 @@ const AUTO_PATROL_POINTS: Array<[number, number, number]> = [
   [0, 0, -14.5],
 ];
 
-export const RobotExpressivePlayer = ({ position = [0, 0, 2] }: RobotExpressivePlayerProps) => {
+export const RobotExpressivePlayer = ({ position = [0, 0, 2], color = null, onPositionChange }: RobotExpressivePlayerProps) => {
   const rootRef = useRef<THREE.Group>(null);
   const modelRootRef = useRef<THREE.Group>(null);
   const keysRef = useRef<Set<string>>(new Set());
@@ -137,8 +145,49 @@ export const RobotExpressivePlayer = ({ position = [0, 0, 2] }: RobotExpressiveP
     | undefined;
 
   const { scene, animations } = useGLTF("/RobotExpressive.glb");
+  // Clone the model so we can safely modify materials for guests without affecting the original
   const model = useMemo(() => SkeletonUtils.clone(scene), [scene]);
   const { actions, names, mixer } = useAnimations(animations, modelRootRef);
+
+  // Apply color tint ONLY for guests (when color is provided)
+  // Owner (color=undefined/null) uses original model colors - NO tinting ever applied
+  const colorAppliedRef = useRef<string | null | undefined>(null);
+  useEffect(() => {
+    if (!model) return;
+    
+    // CRITICAL: Owner has no color - use original model, NEVER modify materials
+    if (!color || color === null || color === undefined || color === "" || color === "null" || color === "undefined") {
+      colorAppliedRef.current = null;
+      return; // Owner: original model colors, zero modifications
+    }
+    
+    // Guest: only apply tint if we have a valid color string
+    if (typeof color !== "string" || color.length === 0) {
+      return;
+    }
+    
+    // Skip if same color already applied
+    if (colorAppliedRef.current === color) return;
+    colorAppliedRef.current = color;
+
+    // Guest: apply color tint to cloned model
+    const tintColor = new THREE.Color(color);
+    model.traverse((child) => {
+      if (child instanceof THREE.Mesh && child.material) {
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        const newMaterials = materials.map((mat) => {
+          if (mat instanceof THREE.MeshStandardMaterial) {
+            const clonedMat = mat.clone();
+            clonedMat.color.set(tintColor);
+            clonedMat.emissive.copy(tintColor).multiplyScalar(0.2);
+            return clonedMat;
+          }
+          return mat;
+        });
+        child.material = Array.isArray(child.material) ? newMaterials : newMaterials[0];
+      }
+    });
+  }, [model, color]);
 
   const findActionName = useCallback(
     (target: string): string | null => {
@@ -438,6 +487,16 @@ export const RobotExpressivePlayer = ({ position = [0, 0, 2] }: RobotExpressiveP
     rootRef.current.position.x = depenetrated.x;
     rootRef.current.position.z = depenetrated.z;
 
+    // ── Broadcast position for multiplayer sync ──
+    if (onPositionChange) {
+      const currentAnim = desiredStateRef.current;
+      onPositionChange(
+        [rootRef.current.position.x, rootRef.current.position.y, rootRef.current.position.z],
+        rootRef.current.rotation.y,
+        currentAnim
+      );
+    }
+
     // ── Camera follow ──
     const charX = rootRef.current.position.x;
     const charZ = rootRef.current.position.z;
@@ -491,6 +550,17 @@ export const RobotExpressivePlayer = ({ position = [0, 0, 2] }: RobotExpressiveP
       <group ref={modelRootRef} position={[0, 0, 0]}>
         <primitive object={model} scale={[0.38, 0.38, 0.38]} castShadow receiveShadow />
       </group>
+      {/* Colored dot above head when tinted (guest mode) */}
+      {color && (
+        <mesh position={[0, 1.8, 0]}>
+          <sphereGeometry args={[0.12, 16, 16]} />
+          <meshStandardMaterial
+            color={color}
+            emissive={color}
+            emissiveIntensity={0.5}
+          />
+        </mesh>
+      )}
     </group>
   );
 };
