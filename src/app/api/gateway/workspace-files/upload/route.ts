@@ -70,7 +70,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid path." }, { status: 400 });
     }
 
-    const isDaytona = gatewayUrl.includes("daytona.works");
+    // daytona.works or daytonaproxy*.net
+    const isDaytona = gatewayUrl.includes("daytona.works") || gatewayUrl.includes("daytonaproxy");
     if (!isDaytona) {
       return NextResponse.json(
         { error: "Only Daytona workspaces are currently supported for file uploads." },
@@ -78,7 +79,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const match = gatewayUrl.match(/\/\/\d+-([a-f0-9-]+)\.proxy\.daytona\.works/);
+    // Extract sandbox ID: ...18789-<uuid>.proxy.daytona.works or ...daytonaproxy01.net
+    const match = gatewayUrl.match(/\/\/\d+-([a-f0-9-]+)\./);
     const sandboxId = match ? match[1] : null;
     if (!sandboxId) {
       throw new Error("Could not extract Daytona sandbox ID from gateway URL");

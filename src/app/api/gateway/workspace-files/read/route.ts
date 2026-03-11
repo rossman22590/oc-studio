@@ -20,8 +20,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Check if using Daytona
-    const isDaytona = gatewayUrl.includes("daytona.works");
+    // Check if using Daytona (daytona.works or daytonaproxy*.net)
+    const isDaytona = gatewayUrl.includes("daytona.works") || gatewayUrl.includes("daytonaproxy");
     
     if (!isDaytona) {
       return NextResponse.json(
@@ -30,8 +30,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Extract sandbox ID from URL
-    const match = gatewayUrl.match(/\/\/\d+-([a-f0-9-]+)\.proxy\.daytona\.works/);
+    // Extract sandbox ID: ...18789-<uuid>.proxy.daytona.works or ...daytonaproxy01.net
+    const match = gatewayUrl.match(/\/\/\d+-([a-f0-9-]+)\./);
     const sandboxId = match ? match[1] : null;
     
     if (!sandboxId) {

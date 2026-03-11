@@ -77,8 +77,9 @@ export async function GET(request: Request) {
       ? `${workspaceDir}/${path.trim()}`
       : workspaceDir;
 
-    // Check if using Daytona - use API directly
-    const isDaytona = gatewayUrl.includes("daytona.works");
+    // Check if using Daytona - use API directly (daytona.works or daytonaproxy*.net)
+    const isDaytona = gatewayUrl.includes("daytona.works") || gatewayUrl.includes("daytonaproxy");
+    console.log("Workspace files request:", { agentId, path: path || "(root)", isDaytona, gatewayUrl: gatewayUrl ? `${gatewayUrl.slice(0, 50)}...` : "(none)" });
     
     if (isDaytona) {
       // Daytona Toolbox API requires absolute path; match console workspace path
@@ -89,9 +90,8 @@ export async function GET(request: Request) {
         ? `${daytonaWorkspaceDir}/${path.trim()}`
         : daytonaWorkspaceDir;
 
-      // Extract sandbox ID from URL like: wss://18789-d3b8ad7f-0e48-44d3-b995-1b57d3862ecb.proxy.daytona.works
-      // Sandbox ID is the UUID part after the port number
-      const match = gatewayUrl.match(/\/\/\d+-([a-f0-9-]+)\.proxy\.daytona\.works/);
+      // Extract sandbox ID: wss://18789-<uuid>.proxy.daytona.works or ...daytonaproxy01.net
+      const match = gatewayUrl.match(/\/\/\d+-([a-f0-9-]+)\./);
       const sandboxId = match ? match[1] : null;
       
       if (!sandboxId) {
@@ -161,26 +161,37 @@ export async function GET(request: Request) {
       }
 
       const rawResponse = await response.text();
-      console.log("Raw Daytona response:", rawResponse.substring(0, 500));
-      
-      const files = JSON.parse(rawResponse) as Array<any>;
+      console.log("Raw Daytona response (first 500 chars):", rawResponse.substring(0, 500));
 
-      console.log("Daytona returned files:", files.length);
-      console.log("Sample file entries:", JSON.stringify(files.slice(0, 3), null, 2));
+      const parsed = JSON.parse(rawResponse) as unknown;
+      // API may return array directly or wrapped (e.g. { files: [...] })
+      let files: Array<Record<string, unknown>> = [];
+      if (Array.isArray(parsed)) {
+        files = parsed;
+      } else if (parsed && typeof parsed === "object") {
+        const obj = parsed as Record<string, unknown>;
+        if (Array.isArray(obj.files)) files = obj.files;
+        else if (Array.isArray(obj.entries)) files = obj.entries;
+      }
 
-      // Convert Daytona response to our format
+      console.log("Daytona file list length:", files.length, "sample:", JSON.stringify(files.slice(0, 3), null, 2));
+
+      // Convert Daytona response to our format (support name/Name, isDir/is_dir, modTime/mod_time)
       const entries: WorkspaceFileEntry[] = files
-        .filter(f => f.name !== "." && f.name !== "..")
+        .filter(f => {
+          const n = (f.name ?? f.Name) as string;
+          return n && n !== "." && n !== "..";
+        })
         .map(f => {
-          // Daytona uses "isDir" field
-          const isDir = f.isDir === true;
-          
+          const name = (f.name ?? f.Name) as string;
+          const isDir = f.isDir === true || f.is_dir === true;
+          const modTime = f.modTime ?? f.mod_time;
           return {
-            name: f.name,
-            path: path.trim() ? `${path.trim()}/${f.name}` : f.name,
+            name,
+            path: path.trim() ? `${path.trim()}/${name}` : name,
             isDirectory: isDir,
-            size: isDir ? undefined : f.size,
-            updatedAtMs: f.modTime ? new Date(f.modTime).getTime() : undefined,
+            size: isDir ? undefined : (f.size as number) ?? undefined,
+            updatedAtMs: modTime != null ? (typeof modTime === "number" ? modTime * 1000 : new Date(String(modTime)).getTime()) : undefined,
           };
         });
       
@@ -228,12 +239,12 @@ export async function GET(request: Request) {
         );
       }
     } else {
-      // Check if using Daytona (extract workspace ID from gateway URL)
-      const isDaytona = gatewayUrl.includes("daytona.works");
+      // Check if using Daytona (daytona.works or daytonaproxy*.net)
+      const isDaytonaLegacy = gatewayUrl.includes("daytona.works") || gatewayUrl.includes("daytonaproxy");
       
-      if (isDaytona) {
-        // Extract workspace ID from URL like: wss://18789-d3b8ad7f-0e48-44d3-b995-1b57d3862ecb.proxy.daytona.works
-        const match = gatewayUrl.match(/\/\/\d+-([a-f0-9-]+)\.proxy\.daytona\.works/);
+      if (isDaytonaLegacy) {
+        // Extract sandbox ID: ...18789-<uuid>.proxy.daytona.works or ...daytonaproxy01.net
+        const match = gatewayUrl.match(/\/\/\d+-([a-f0-9-]+)\./);
         const workspaceId = match ? match[1] : null;
         
         if (!workspaceId) {
