@@ -91,12 +91,12 @@ export async function POST(request: NextRequest) {
       throw new Error("DAYTONA_API_KEY environment variable is required");
     }
 
-    // Construct full path
+    // Construct full path (Daytona requires absolute path; match console workspace)
     const useRootWorkspace = rootWorkspace === true;
     const workspaceDir =
       agentId === "main" || useRootWorkspace
         ? "/home/daytona/.openclaw/workspace"
-        : `.openclaw/workspace-${agentId}`;
+        : `/home/daytona/.openclaw/workspace-${agentId}`;
 
     const fullPath = `${workspaceDir}/${filePath}`;
 

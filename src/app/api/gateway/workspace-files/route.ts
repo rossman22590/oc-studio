@@ -68,13 +68,12 @@ export async function GET(request: Request) {
       );
     }
 
-    // Determine workspace directory
-    // Main agent uses absolute path (required by Daytona), others use relative (resolves from home)
+    // Determine workspace directory (relative for SSH; absolute for Daytona set below)
     const workspaceDir = agentId === "main" || useRootWorkspace
       ? "/home/daytona/.openclaw/workspace"
       : `.openclaw/workspace-${agentId}`;
     
-    const targetPath = path.trim() 
+    let targetPath = path.trim()
       ? `${workspaceDir}/${path.trim()}`
       : workspaceDir;
 
@@ -82,6 +81,14 @@ export async function GET(request: Request) {
     const isDaytona = gatewayUrl.includes("daytona.works");
     
     if (isDaytona) {
+      // Daytona Toolbox API requires absolute path; match console workspace path
+      const daytonaWorkspaceDir = agentId === "main" || useRootWorkspace
+        ? "/home/daytona/.openclaw/workspace"
+        : `/home/daytona/.openclaw/workspace-${agentId}`;
+      targetPath = path.trim()
+        ? `${daytonaWorkspaceDir}/${path.trim()}`
+        : daytonaWorkspaceDir;
+
       // Extract sandbox ID from URL like: wss://18789-d3b8ad7f-0e48-44d3-b995-1b57d3862ecb.proxy.daytona.works
       // Sandbox ID is the UUID part after the port number
       const match = gatewayUrl.match(/\/\/\d+-([a-f0-9-]+)\.proxy\.daytona\.works/);
