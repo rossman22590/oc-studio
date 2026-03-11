@@ -568,7 +568,7 @@ const LobsterAgent = ({
 
       {/* ── Floating UI – tracks the lobster's ACTUAL animated position ── */}
       <group ref={uiGroupRef} position={[targetPos[0], 0, targetPos[2]]}>
-        {/* Name label */}
+        {/* Name label - Always visible for all users (owners and guests) */}
         <Text
           position={[0, labelY, 0]}
           fontSize={0.3}
@@ -578,6 +578,7 @@ const LobsterAgent = ({
           outlineWidth={0.02}
           outlineColor="black"
           fontWeight={isPicked ? "bold" : "normal"}
+          renderOrder={1000}
         >
           {isPicked ? `✦ ${agent.name} ✦` : agent.name}
         </Text>

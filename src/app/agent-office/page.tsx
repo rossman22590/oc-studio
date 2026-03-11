@@ -15,6 +15,7 @@ const AgentOfficeContent = () => {
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [tokenValid, setTokenValid] = useState<boolean | null>(null);
   const [validating, setValidating] = useState(false);
+  const [interactiveAgentId, setInteractiveAgentId] = useState<string | null>(null);
 
   // Validate the share token if we're a guest
   useEffect(() => {
@@ -28,9 +29,10 @@ const AgentOfficeContent = () => {
           setTokenValid(false);
           return;
         }
-        const data = (await res.json()) as { valid: boolean };
+        const data = (await res.json()) as { valid: boolean; interactiveAgentId?: string | null };
         setTokenValid(data.valid);
         if (data.valid) {
+          setInteractiveAgentId(data.interactiveAgentId || null);
           setShowColorPicker(true);
         }
       } catch {
@@ -107,6 +109,7 @@ const AgentOfficeContent = () => {
           isGuest={isGuest}
           shareToken={shareToken}
           guestColor={guestColor || "#6366f1"}
+          interactiveAgentId={interactiveAgentId}
         />
       </div>
       <div className="md:hidden flex items-center justify-center h-screen">

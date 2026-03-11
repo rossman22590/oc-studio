@@ -2,28 +2,35 @@
 
 import { useState, useCallback } from "react";
 import { Share2, Copy, Check, Trash2, X, Link2 } from "lucide-react";
+import type { AgentState } from "@/features/agents/state/store";
 
 type ShareButtonProps = {
   ownerId: string;
+  agents: AgentState[];
   onTokenGenerated?: (token: string) => void;
   onTokenRevoked?: () => void;
 };
 
-export const ShareButton = ({ ownerId, onTokenGenerated, onTokenRevoked }: ShareButtonProps) => {
+export const ShareButton = ({ ownerId, agents, onTokenGenerated, onTokenRevoked }: ShareButtonProps) => {
   const [modalOpen, setModalOpen] = useState(false);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [shareToken, setShareToken] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
 
   const handleGenerateLink = useCallback(async () => {
+    if (!selectedAgentId) {
+      alert("Please select an agent to share");
+      return;
+    }
     setLoading(true);
     try {
       const res = await fetch("/api/office/share", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ownerId }),
+        body: JSON.stringify({ ownerId, interactiveAgentId: selectedAgentId }),
       });
       if (!res.ok) throw new Error("Failed to generate link");
       const data = (await res.json()) as {
@@ -40,7 +47,7 @@ export const ShareButton = ({ ownerId, onTokenGenerated, onTokenRevoked }: Share
     } finally {
       setLoading(false);
     }
-  }, [ownerId]);
+  }, [ownerId, selectedAgentId]);
 
   const handleCopy = useCallback(async () => {
     if (!shareUrl) return;
@@ -129,14 +136,57 @@ export const ShareButton = ({ ownerId, onTokenGenerated, onTokenRevoked }: Share
 
             {/* Content */}
             {!shareUrl ? (
-              <button
-                onClick={handleGenerateLink}
-                disabled={loading}
-                className="w-full rounded-lg bg-primary px-4 py-3 text-sm font-bold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
-                tabIndex={0}
-              >
-                {loading ? "Generating..." : "Generate Invite Link"}
-              </button>
+              <div className="space-y-4">
+                {/* Agent selection */}
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-foreground">
+                    Select Agent to Share
+                  </label>
+                  <p className="mb-3 text-xs text-muted-foreground">
+                    Guests will only be able to interact with this agent (click lobster, send chat)
+                  </p>
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {agents.length === 0 ? (
+                      <p className="text-sm text-muted-foreground py-4 text-center">
+                        No agents available
+                      </p>
+                    ) : (
+                      agents.map((agent) => (
+                        <button
+                          key={agent.agentId}
+                          onClick={() => setSelectedAgentId(agent.agentId)}
+                          className={`w-full rounded-lg border-2 px-3 py-2.5 text-left transition ${
+                            selectedAgentId === agent.agentId
+                              ? "border-primary bg-primary/10"
+                              : "border-border bg-muted/30 hover:border-primary/50"
+                          }`}
+                          tabIndex={0}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-foreground">{agent.name}</span>
+                            {selectedAgentId === agent.agentId && (
+                              <Check className="h-4 w-4 text-primary" />
+                            )}
+                          </div>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            {agent.status === "running" ? "Running" : "Idle"}
+                          </p>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                {/* Generate button */}
+                <button
+                  onClick={handleGenerateLink}
+                  disabled={loading || !selectedAgentId || agents.length === 0}
+                  className="w-full rounded-lg bg-primary px-4 py-3 text-sm font-bold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                  tabIndex={0}
+                >
+                  {loading ? "Generating..." : "Generate Invite Link"}
+                </button>
+              </div>
             ) : (
               <div className="space-y-4">
                 {/* Link display */}

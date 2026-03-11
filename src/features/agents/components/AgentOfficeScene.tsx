@@ -28,6 +28,10 @@ import { Home, Cable, Volume2, Volume1, VolumeX, Zap, MessageSquare, SkipForward
 import { ShareButton } from "./office3d/ShareButton";
 import { GuestPlayer } from "./office3d/GuestPlayer";
 import { usePositionSync } from "./office3d/usePositionSync";
+import { VoiceChatWidget } from "./office3d/VoiceChatWidget";
+import { useAgentSync } from "./office3d/useAgentSync";
+import { useGuestChat } from "./office3d/useGuestChat";
+import { checkRateLimit, recordMessage } from "@/lib/ably/rateLimiter";
 
 export type AgentBoxData = {
   id: string;
@@ -44,15 +48,23 @@ type AgentOfficeSceneProps = {
   isGuest?: boolean;
   shareToken?: string | null;
   guestColor?: string;
+  interactiveAgentId?: string | null; // For guests: the ONE agent they can interact with
 };
 
 const OWNER_SHARE_TOKEN_STORAGE_KEY = "oc-office-share-token";
 
-export const AgentOfficeScene = ({ isGuest = false, shareToken = null, guestColor = "#6366f1" }: AgentOfficeSceneProps) => {
+export const AgentOfficeScene = ({ isGuest = false, shareToken = null, guestColor = "#6366f1", interactiveAgentId = null }: AgentOfficeSceneProps) => {
   const { state, hydrateAgents, setLoading, setError, dispatch } = useAgentStore();
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [chatModalOpen, setChatModalOpen] = useState(false);
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
+  
+  // For guests: Force selectedAgentId to always be the interactive agent
+  useEffect(() => {
+    if (isGuest && interactiveAgentId && selectedAgentId !== interactiveAgentId) {
+      setSelectedAgentId(interactiveAgentId);
+    }
+  }, [isGuest, interactiveAgentId, selectedAgentId]);
   const [fileManagerOpen, setFileManagerOpen] = useState(false);
   const [swarmModalOpen, setSwarmModalOpen] = useState(false);
   const [chatroomOpen, setChatroomOpen] = useState(false);
@@ -101,15 +113,15 @@ export const AgentOfficeScene = ({ isGuest = false, shareToken = null, guestColo
     }
   }, []);
 
-  // Position sync hook — single POST sends our position AND receives all players
-  // Owner uses default model color (no tint), guest uses their chosen color
-  const { players: remotePlayers, connected: syncConnected, sendPosition, debug: syncDebug } = usePositionSync({
+  // Position sync: Ably realtime primary, HTTP polling fallback
+  // Owner uses neutral color for sync wire (not applied to 3D model), guest uses chosen color
+  const { players: remotePlayers, connected: syncConnected, transport: syncTransport, sendPosition } = usePositionSync({
     token: ownerShareToken,
     userId: userIdRef.current,
     role: isGuest ? "guest" : "owner",
-    color: isGuest ? guestColor : "#888888", // Owner uses neutral gray for sync (not applied to model)
+    color: isGuest ? guestColor : "#888888",
     enabled: !!ownerShareToken,
-    syncIntervalMs: 100,
+    publishIntervalMs: 1000, // 1Hz publish rate (1 message/second = 3,600/hour per user, reduced to stay under 250k/hour limit)
   });
 
   // Callback for RobotExpressivePlayer to report position changes
@@ -220,8 +232,52 @@ export const AgentOfficeScene = ({ isGuest = false, shareToken = null, guestColo
   // Toggle mute/unmute for the wall TV YouTube player
   const toggleMusic = () => setTvMuted((prev) => !prev);
 
-  // Handle sending messages to agents — uses the real sessionKey from the agent store
+  // Guest chat hook - for guests to send messages via Ably (only for the host-selected agent)
+  const guestChat = useGuestChat({
+    token: isGuest ? ownerShareToken : null,
+    userId: userIdRef.current,
+    agentId: isGuest ? interactiveAgentId : null,
+    enabled: isGuest && !!ownerShareToken && !!interactiveAgentId,
+    onAgentResponse: isGuest
+      ? (message, agentId) => {
+          // Guest: update agent state with new response (only for the interactive agent)
+          if (interactiveAgentId && agentId === interactiveAgentId) {
+            const agent = state.agents.find((a) => a.agentId === interactiveAgentId);
+            if (agent) {
+              dispatch({
+                type: "updateAgent",
+                agentId: interactiveAgentId,
+                patch: {
+                  streamText: message,
+                  lastResult: message,
+                  outputLines: [...agent.outputLines, message],
+                },
+              });
+            }
+          }
+        }
+      : undefined,
+  });
+
+  // Handle sending messages to agents
+  // - Owner: via gateway
+  // - Guest: via Ably (useGuestChat) - ONLY for the host-selected interactive agent
   const handleSendMessage = async (agentId: string, message: string) => {
+    if (isGuest) {
+      // Guest: can only send to the host-selected interactive agent
+      if (agentId !== interactiveAgentId) {
+        console.error("Guest can only chat with the host-selected agent:", interactiveAgentId);
+        return;
+      }
+      if (!interactiveAgentId) {
+        console.error("No interactive agent selected by host");
+        return;
+      }
+      await guestChat.sendMessage(message);
+      return;
+    }
+
+    // Owner: send via gateway
     if (!client || status !== "connected") {
       console.error("Cannot send message: not connected to gateway");
       return;
@@ -277,8 +333,10 @@ export const AgentOfficeScene = ({ isGuest = false, shareToken = null, guestColo
     );
   };
 
-  // Hydrate agents from gateway on connection
+  // Owner: Hydrate agents from gateway on connection
+  // Guest: Will receive agents via Ably sync (see useAgentSync below)
   useEffect(() => {
+    if (isGuest) return; // Guests get agents via Ably, not gateway
     if (status !== "connected" || !client) return;
 
     const loadAgents = async () => {
@@ -293,8 +351,10 @@ export const AgentOfficeScene = ({ isGuest = false, shareToken = null, guestColo
           logError: (message, error) => console.error(message, error),
         });
         hydrateAgents(result.seeds);
+        console.log("[office] Owner loaded agents:", result.seeds.length);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load agents");
+        console.error("[office] Owner failed to load agents:", err);
       } finally {
         setLoading(false);
       }
@@ -302,7 +362,351 @@ export const AgentOfficeScene = ({ isGuest = false, shareToken = null, guestColo
 
     loadAgents();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, client]);
+  }, [status, client, isGuest]);
+
+  // Owner: Forward agent responses to guests via Ably
+  const ablyChannelRef = useRef<ReturnType<import("ably").Realtime["channels"]["get"]> | null>(null);
+  const lastPublishedResponseRef = useRef<Map<string, string>>(new Map());
+  const forwardedMessagesRef = useRef<Set<string>>(new Set()); // Track forwarded messages to prevent duplicates
+  const gatewayClientRef = useRef(client);
+  gatewayClientRef.current = client;
+  useEffect(() => {
+    if (isGuest || !ownerShareToken) return;
+
+    // Set up Ably channel for forwarding agent responses
+    const setupAbly = async () => {
+      // Check if Ably is blocked before attempting connection
+      try {
+        const checkRes = await fetch(
+          `/api/office/realtime-auth?token=${encodeURIComponent(ownerShareToken)}&userId=${encodeURIComponent(userIdRef.current)}`,
+          { cache: "no-store" }
+        );
+        if (checkRes.status === 401) {
+          const checkData = await checkRes.json().catch(() => ({}));
+          if (checkData.code === 40112 || checkData.error?.includes("blocked") || checkRes.headers.get("x-ably-error-code") === "40112") {
+            console.log("[office] Ably is blocked, skipping Ably and using HTTP polling only");
+            return; // Skip Ably setup, HTTP polling will handle it
+          }
+        }
+      } catch {
+        // If check fails, try Ably anyway
+      }
+
+      try {
+        const Ably = await import("ably");
+        const channelName = `office:${ownerShareToken}`;
+        const client = new Ably.Realtime({
+          authUrl: `/api/office/realtime-auth?token=${encodeURIComponent(
+            ownerShareToken
+          )}&userId=${encodeURIComponent(userIdRef.current)}`,
+          clientId: userIdRef.current,
+          autoConnect: true,
+        });
+
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("Ably connect timeout")), 8000);
+          client.connection.once("connected", () => {
+            clearTimeout(timeout);
+            resolve();
+          });
+          client.connection.once("failed", (err) => {
+            clearTimeout(timeout);
+            const error = err as { code?: number; statusCode?: number; message?: string };
+            // Check for account blocked error (40112)
+            if (error.code === 40112 || (error.statusCode === 401 && error.message?.includes("blocked"))) {
+              console.error("[office] Ably account blocked - message limits exceeded. Agent response forwarding disabled.");
+              reject(new Error("Ably account blocked - message limits exceeded"));
+            } else {
+              reject(new Error("Ably connection failed"));
+            }
+          });
+        });
+
+        const channel = client.channels.get(channelName);
+        await channel.attach();
+        ablyChannelRef.current = channel;
+
+        // Monitor agent state changes and forward responses to guests
+        // Only forward responses for the host-selected interactive agent
+        const checkAgentResponses = () => {
+          if (!interactiveAgentId) return;
+          const agent = state.agents.find((a) => a.agentId === interactiveAgentId);
+          if (!agent) return;
+          
+          // Get the latest message from streamText, lastResult, or last outputLine
+          const lastMessage = agent.streamText || agent.lastResult || (agent.outputLines.length > 0 ? agent.outputLines[agent.outputLines.length - 1] : null);
+          if (lastMessage) {
+            // Only publish if message has changed (avoid duplicate publishes)
+            const lastPublished = lastPublishedResponseRef.current.get(interactiveAgentId);
+            if (lastPublished === lastMessage) return;
+            
+            console.log("[office] Forwarding agent response to guests:", { agentId: interactiveAgentId, message: lastMessage.substring(0, 50) });
+            lastPublishedResponseRef.current.set(interactiveAgentId, lastMessage);
+            
+            // Forward via Ably if available (with rate limiting)
+            if (ablyChannelRef.current) {
+              // Check rate limit before publishing
+              const rateLimit = checkRateLimit();
+              if (rateLimit.allowed && !rateLimit.shouldThrottle) {
+                void ablyChannelRef.current.publish(`agent-response:${interactiveAgentId}`, {
+                  agentId: interactiveAgentId,
+                  message: lastMessage,
+                  ts: Date.now(),
+                }).then(() => {
+                  recordMessage(1);
+                }).catch((err) => {
+                  const error = err as Error & { code?: number; statusCode?: number };
+                  // Check for quota exceeded or account blocked errors
+                  if (error.code === 9103 || error.code === 9104 || error.code === 40112 || error.statusCode === 429 || error.statusCode === 401) {
+                    console.warn("[office] Ably quota exceeded or account blocked when forwarding agent response");
+                  }
+                });
+              } else if (rateLimit.shouldThrottle) {
+                // Throttle: only publish every 5th message when approaching limit
+                const shouldPublish = Math.random() < 0.2; // 20% chance
+                if (shouldPublish) {
+                  void ablyChannelRef.current.publish(`agent-response:${interactiveAgentId}`, {
+                    agentId: interactiveAgentId,
+                    message: lastMessage,
+                    ts: Date.now(),
+                  }).then(() => {
+                    recordMessage(1);
+                  }).catch(() => {});
+                }
+              }
+            }
+            
+            // Also publish to HTTP endpoint (for polling fallback)
+            if (ownerShareToken) {
+              void fetch("/api/office/chat", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  token: ownerShareToken,
+                  agentId: interactiveAgentId,
+                  message: lastMessage,
+                }),
+                cache: "no-store",
+              }).catch(() => {
+                // Ignore HTTP failures
+              });
+            }
+          }
+        };
+        
+        // Poll for guest messages via HTTP (fallback when Ably is blocked)
+        const pollGuestMessages = async () => {
+          const gatewayClient = gatewayClientRef.current;
+          if (!ownerShareToken || !gatewayClient || status !== "connected") return;
+          try {
+            const res = await fetch(
+              `/api/office/chat?token=${encodeURIComponent(ownerShareToken)}&userId=${encodeURIComponent(userIdRef.current)}&_=${Date.now()}`,
+              { cache: "no-store" }
+            );
+            if (res.ok) {
+              const data = (await res.json()) as { messages?: Array<{ userId: string; agentId: string; message: string; ts: number }> };
+              if (Array.isArray(data.messages) && data.messages.length > 0) {
+                console.log("[office] Polled guest messages:", data.messages.length);
+                for (const msg of data.messages) {
+                  // Create unique key for this message (userId + agentId + message + ts)
+                  const messageKey = `${msg.userId}:${msg.agentId}:${msg.message}:${msg.ts}`;
+                  
+                  // Skip if already forwarded
+                  if (forwardedMessagesRef.current.has(messageKey)) {
+                    console.log("[office] Skipping duplicate message:", messageKey);
+                    continue;
+                  }
+                  
+                  // Forward to gateway
+                  const agent = state.agents.find((a) => a.agentId === msg.agentId);
+                  if (agent) {
+                    try {
+                      console.log("[office] Forwarding guest message to agent:", { agentId: msg.agentId, userId: msg.userId, message: msg.message.substring(0, 50) });
+                      await sendChatMessageViaStudio({
+                        client: gatewayClient!,
+                        dispatch,
+                        getAgent: (id) => state.agents.find((a) => a.agentId === id) ?? null,
+                        agentId: msg.agentId,
+                        sessionKey: agent.sessionKey,
+                        message: msg.message,
+                      });
+                      // Mark as forwarded
+                      forwardedMessagesRef.current.add(messageKey);
+                      console.log("[office] Successfully forwarded guest chat from HTTP polling:", { agentId: msg.agentId, userId: msg.userId });
+                      
+                      // Clean up old entries (keep last 100)
+                      if (forwardedMessagesRef.current.size > 100) {
+                        const entries = Array.from(forwardedMessagesRef.current);
+                        forwardedMessagesRef.current = new Set(entries.slice(-50));
+                      }
+                    } catch (err) {
+                      console.error("[office] Failed to forward guest chat from HTTP:", err);
+                    }
+                  } else {
+                    console.warn("[office] Agent not found for guest message:", msg.agentId);
+                  }
+                }
+              }
+            } else {
+              console.warn("[office] Failed to poll guest messages:", res.status);
+            }
+          } catch (err) {
+            console.error("[office] Error polling guest messages:", err);
+          }
+        };
+        
+        // Poll for guest messages every 5 seconds (reduced frequency to stay under rate limit)
+        const pollInterval = setInterval(pollGuestMessages, 5000);
+        void pollGuestMessages(); // Initial poll
+
+        // Check every 1 second for new agent responses (more frequent to catch responses quickly)
+        // At 1s interval: max 3,600 messages/hour per office
+        const interval = setInterval(checkAgentResponses, 1000);
+        
+        // Run check immediately
+        checkAgentResponses();
+
+        return () => {
+          clearInterval(interval);
+          clearInterval(pollInterval);
+          void channel.detach();
+          client.close();
+        };
+      } catch (err) {
+        const error = err as Error & { code?: number; statusCode?: number; message?: string };
+        if (error.code === 40112 || (error.statusCode === 401 && error.message?.includes("blocked"))) {
+          console.error("[office] Ably account blocked - message limits exceeded. Agent response forwarding disabled.");
+        } else {
+          console.error("[office] Failed to setup Ably for agent responses:", err);
+        }
+      }
+    };
+
+    const cleanup = setupAbly();
+    return () => {
+      void cleanup.then((cb) => cb?.());
+    };
+  }, [isGuest, ownerShareToken, interactiveAgentId, userIdRef]);
+
+  // Watch for agent state changes and forward responses immediately (reactive)
+  useEffect(() => {
+    if (isGuest || !ownerShareToken || !interactiveAgentId) return;
+    
+    const agent = state.agents.find((a) => a.agentId === interactiveAgentId);
+    if (!agent) return;
+    
+    // Get the latest message
+    const lastMessage = agent.streamText || agent.lastResult || (agent.outputLines.length > 0 ? agent.outputLines[agent.outputLines.length - 1] : null);
+    if (!lastMessage) return;
+    
+    // Check if this is a new message
+    const lastPublished = lastPublishedResponseRef.current.get(interactiveAgentId);
+    if (lastPublished === lastMessage) return;
+    
+    // Forward immediately via Ably and HTTP
+    console.log("[office] Agent state changed, forwarding response:", { agentId: interactiveAgentId, message: lastMessage.substring(0, 50) });
+    
+    lastPublishedResponseRef.current.set(interactiveAgentId, lastMessage);
+    
+    // Forward via Ably
+    if (ablyChannelRef.current) {
+      const rateLimit = checkRateLimit();
+      if (rateLimit.allowed && !rateLimit.shouldThrottle) {
+        void ablyChannelRef.current.publish(`agent-response:${interactiveAgentId}`, {
+          agentId: interactiveAgentId,
+          message: lastMessage,
+          ts: Date.now(),
+        }).then(() => {
+          recordMessage(1);
+        }).catch((err) => {
+          console.error("[office] Failed to publish agent response via Ably:", err);
+        });
+      }
+    }
+    
+    // Also publish to HTTP endpoint (for polling fallback)
+    void fetch("/api/office/chat", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        token: ownerShareToken,
+        agentId: interactiveAgentId,
+        message: lastMessage,
+      }),
+      cache: "no-store",
+    }).catch((err) => {
+      console.error("[office] Failed to publish agent response via HTTP:", err);
+    });
+  }, [
+    isGuest,
+    ownerShareToken,
+    interactiveAgentId,
+    state.agents.find(a => a.agentId === interactiveAgentId)?.streamText,
+    state.agents.find(a => a.agentId === interactiveAgentId)?.lastResult,
+    state.agents.find(a => a.agentId === interactiveAgentId)?.outputLines?.length,
+  ]);
+
+  // Sync agent state via Ably: owner publishes, guests receive
+  // For guests: filter to only the interactive agent
+  // NOTE: Owners should always see all agents from gateway, Ably sync is just for sharing with guests
+  // IMPORTANT: Owner needs share token to publish, guest needs share token from URL to receive
+  useAgentSync({
+    token: isGuest ? shareToken : ownerShareToken, // Guest uses URL token, owner uses stored token
+    userId: userIdRef.current,
+    role: isGuest ? "guest" : "owner",
+    enabled: isGuest ? !!shareToken : !!ownerShareToken, // Enable based on token availability
+    agentState: isGuest ? [] : state.agents, // Owner publishes, guest receives
+    interactiveAgentId: isGuest ? interactiveAgentId : null, // Filter for guests
+    onAgentsReceived: isGuest
+      ? (agents) => {
+          // Guest: receive all agents from owner (filtering happens in UI)
+          console.log("[office] Guest received agents via Ably:", agents.length);
+          hydrateAgents(agents);
+        }
+      : undefined,
+    onGuestChat: !isGuest && client && status === "connected"
+      ? async (agentId, message, userId) => {
+          // Create unique key for this message (userId + agentId + message hash)
+          // Use message content hash to prevent duplicates even if received multiple times
+          const messageHash = message.slice(0, 50); // Use first 50 chars as hash
+          const messageKey = `${userId}:${agentId}:${messageHash}`;
+          
+          // Skip if already forwarded (check last 50 entries)
+          if (forwardedMessagesRef.current.has(messageKey)) {
+            console.log("[office] Duplicate guest chat message ignored:", { agentId, userId });
+            return;
+          }
+          
+          // Owner: forward guest chat to gateway
+          const agent = state.agents.find((a) => a.agentId === agentId);
+          if (!agent) {
+            console.error("[office] Agent not found for guest chat:", agentId);
+            return;
+          }
+          try {
+            await sendChatMessageViaStudio({
+              client: client!,
+              dispatch,
+              getAgent: (id) => state.agents.find((a) => a.agentId === id) ?? null,
+              agentId,
+              sessionKey: agent.sessionKey,
+              message,
+            });
+            // Mark as forwarded
+            forwardedMessagesRef.current.add(messageKey);
+            console.log("[office] Forwarded guest chat to gateway:", { agentId, userId, message });
+            
+            // Clean up old entries (keep last 100)
+            if (forwardedMessagesRef.current.size > 100) {
+              const entries = Array.from(forwardedMessagesRef.current);
+              forwardedMessagesRef.current = new Set(entries.slice(-50));
+            }
+          } catch (err) {
+            console.error("[office] Failed to forward guest chat:", err);
+          }
+        }
+      : undefined,
+  });
 
   // Track previous outputLines count to detect new messages
   const prevLineCountsRef = useRef<Map<string, number>>(new Map());
@@ -315,7 +719,11 @@ export const AgentOfficeScene = ({ isGuest = false, shareToken = null, guestColo
     const newMsgSet = new Set<string>();
     const newToasts: { id: string; agentName: string; message: string; ts: number }[] = [];
 
-    const boxes: AgentBoxData[] = state.agents.map((agent, index) => {
+    // Guests can see all agents (like host), but can only interact with interactive agent
+    // This ensures guests see the same agent count as the host
+    const agentsToShow = state.agents;
+
+    const boxes: AgentBoxData[] = agentsToShow.map((agent, index) => {
       const prevCount = prevLineCountsRef.current.get(agent.agentId) ?? 0;
       const currentCount = agent.outputLines.length;
       const hasNew = currentCount > prevCount && prevCount > 0;
@@ -413,60 +821,92 @@ export const AgentOfficeScene = ({ isGuest = false, shareToken = null, guestColo
   return (
     <>
       {/* Top-left controls overlay */}
-      <div className="absolute top-4 left-4 z-10 flex items-center gap-2">
-        <Link
-          href="/studio"
-          className="flex items-center gap-2 rounded-md border border-input/90 bg-background/75 backdrop-blur-sm px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-foreground transition hover:border-ring hover:bg-card shadow-lg"
-        >
-          <Home className="h-4 w-4" />
-          Home
-        </Link>
-        {!isGuest && (
-          <>
-            <button
-              onClick={() => setChatroomOpen(true)}
-              disabled={status !== "connected" || state.agents.length === 0}
-              className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 backdrop-blur-sm px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary hover:text-white shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
-              title="Open agent chatroom"
-              aria-label="Open chatroom"
-              tabIndex={0}
-            >
-              <MessageSquare className="h-4 w-4" />
-              Chat
-            </button>
-            <button
-              onClick={() => setSwarmModalOpen(true)}
-              disabled={status !== "connected" || state.agents.length === 0}
-              className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 backdrop-blur-sm px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary hover:text-white shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
-              title="Dispatch tasks to all agents"
-            >
-              <Zap className="h-4 w-4" />
-              Swarm
-            </button>
-            <button
-              onClick={() => setKanbanOpen(true)}
-              disabled={status !== "connected" || state.agents.length === 0}
-              className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 backdrop-blur-sm px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary hover:text-white shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
-              title="Open kanban board"
-              aria-label="Open kanban board"
-              tabIndex={0}
-            >
-              <LayoutGrid className="h-4 w-4" />
-              Kanban
-            </button>
-            <ShareButton
-              ownerId={userIdRef.current}
-              onTokenGenerated={handleOwnerTokenGenerated}
-              onTokenRevoked={handleOwnerTokenRevoked}
-            />
-          </>
-        )}
-        {isGuest && (
-          <div className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 backdrop-blur-sm px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary shadow-lg">
-            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: guestColor }} />
-            Guest Mode
-          </div>
-        )}
+      <div className="absolute top-4 left-4 z-10 flex flex-col gap-2">
+        {/* Top row: 3 buttons */}
+        <div className="flex items-center gap-2">
+          <Link
+            href="/studio"
+            className="flex items-center gap-2 rounded-md border border-input/90 bg-background/75 backdrop-blur-sm px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-foreground transition hover:border-ring hover:bg-card shadow-lg"
+          >
+            <Home className="h-4 w-4" />
+            Home
+          </Link>
+          {!isGuest && (
+            <>
+              <button
+                onClick={() => setChatroomOpen(true)}
+                disabled={status !== "connected" || state.agents.length === 0}
+                className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 backdrop-blur-sm px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary hover:text-white shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Open agent chatroom"
+                aria-label="Open chatroom"
+                tabIndex={0}
+              >
+                <MessageSquare className="h-4 w-4" />
+                Chat
+              </button>
+              <button
+                onClick={() => setSwarmModalOpen(true)}
+                disabled={status !== "connected" || state.agents.length === 0}
+                className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 backdrop-blur-sm px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary hover:text-white shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Dispatch tasks to all agents"
+              >
+                <Zap className="h-4 w-4" />
+                Swarm
+              </button>
+            </>
+          )}
+          {isGuest && (
+            <>
+              <div className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 backdrop-blur-sm px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary shadow-lg">
+                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: guestColor }} />
+                Guest Mode
+              </div>
+              <div className="w-0 h-0" /> {/* Spacer */}
+              <div className="w-0 h-0" /> {/* Spacer */}
+            </>
+          )}
+        </div>
+
+        {/* Bottom row: 3 buttons */}
+        <div className="flex items-center gap-2">
+          {!isGuest && (
+            <>
+                  <ShareButton
+                    ownerId={userIdRef.current}
+                    agents={state.agents}
+                    onTokenGenerated={handleOwnerTokenGenerated}
+                    onTokenRevoked={handleOwnerTokenRevoked}
+                  />
+              <button
+                onClick={() => setKanbanOpen(true)}
+                disabled={status !== "connected" || state.agents.length === 0}
+                className="flex items-center gap-2 rounded-md border border-primary/50 bg-white dark:bg-white/95 backdrop-blur-sm px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-primary transition hover:border-primary hover:bg-primary hover:text-white shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Open kanban board"
+                aria-label="Open kanban board"
+                tabIndex={0}
+              >
+                <LayoutGrid className="h-4 w-4" />
+                Kanban
+              </button>
+              <VoiceChatWidget
+                shareToken={ownerShareToken}
+                userId={userIdRef.current}
+                enabled={!!ownerShareToken}
+              />
+            </>
+          )}
+          {isGuest && (
+            <>
+              <div className="w-0 h-0" /> {/* Spacer */}
+              <div className="w-0 h-0" /> {/* Spacer */}
+              <VoiceChatWidget
+                shareToken={shareToken}
+                userId={userIdRef.current}
+                enabled={!!shareToken}
+              />
+            </>
+          )}
+        </div>
       </div>
 
       {/* Title overlay */}
@@ -481,22 +921,12 @@ export const AgentOfficeScene = ({ isGuest = false, shareToken = null, guestColo
         )}
       </div>
 
-      {/* DEBUG PANEL - Remove after fixing */}
-      {syncDebug && (
-        <div className="absolute bottom-4 left-4 z-10 glass-panel px-3 py-2 text-xs font-mono bg-black/80 text-green-400 border border-green-500/50">
-          <div className="font-bold mb-1">DEBUG SYNC</div>
-          <div>Token: {syncDebug.token ? `${syncDebug.token.slice(0, 8)}...` : "NULL"}</div>
-          <div>UserId: {syncDebug.userId}</div>
-          <div>Remote Players: {syncDebug.remoteCount}</div>
-          <div>Connected: {syncConnected ? "YES" : "NO"}</div>
-          <div>Last Send: {syncDebug.lastSend > 0 ? `${Math.round((Date.now() - syncDebug.lastSend) / 1000)}s ago` : "never"}</div>
-          <div>Last Receive: {syncDebug.lastReceive > 0 ? `${Math.round((Date.now() - syncDebug.lastReceive) / 1000)}s ago` : "never"}</div>
-          <div>Errors: {syncDebug.errors}</div>
-          {remotePlayers.length > 0 && (
-            <div className="mt-1 pt-1 border-t border-green-500/30">
-              Players: {remotePlayers.map(p => `${p.userId}(${p.role})`).join(", ")}
-            </div>
-          )}
+      {/* Sync status indicator (bottom-left) */}
+      {ownerShareToken && (
+        <div className="absolute bottom-4 left-4 z-10 flex items-center gap-2 rounded-md border border-input/50 bg-background/75 backdrop-blur-sm px-3 py-1.5 text-xs font-mono text-muted-foreground shadow">
+          <span className={`h-2 w-2 rounded-full ${syncConnected ? "bg-green-500" : "bg-yellow-500 animate-pulse"}`} />
+          {syncTransport === "ably" ? "Realtime" : syncTransport === "polling" ? "Polling" : "Connecting..."}
+          {syncConnected && ` · ${remotePlayers.length + 1} in office`}
         </div>
       )}
 
@@ -571,16 +1001,32 @@ export const AgentOfficeScene = ({ isGuest = false, shareToken = null, guestColo
 
       {/* Connection status */}
       <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10">
-        {status === "connected" ? (
-          <div className="flex items-center gap-2 rounded-md border-2 border-primary/60 bg-white px-4 py-2.5 text-sm font-bold uppercase tracking-[0.12em] text-primary shadow-lg">
-            <span className="h-3 w-3 rounded-full bg-primary animate-pulse" />
-            Connected • {state.agents.length} agents
-          </div>
+        {isGuest ? (
+          // Guest: Show status based on agent sync (Ably), not gateway
+          state.agents.length > 0 ? (
+            <div className="flex items-center gap-2 rounded-md border-2 border-primary/60 bg-white px-4 py-2.5 text-sm font-bold uppercase tracking-[0.12em] text-primary shadow-lg">
+              <span className="h-3 w-3 rounded-full bg-primary animate-pulse" />
+              Viewing • {state.agents.length} agent{state.agents.length !== 1 ? "s" : ""} (View Only)
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 rounded-md border-2 border-yellow-400 bg-white px-4 py-2.5 text-sm font-bold uppercase tracking-[0.12em] text-yellow-700 shadow-lg">
+              <span className="h-3 w-3 rounded-full bg-yellow-400 animate-pulse" />
+              Waiting for agents...
+            </div>
+          )
         ) : (
-          <div className="flex items-center gap-2 rounded-md border-2 border-gray-300 bg-white px-4 py-2.5 text-sm font-bold uppercase tracking-[0.12em] text-gray-700 shadow-lg">
-            <Cable className="h-4 w-4" />
-            {status === "connecting" ? "Connecting..." : "Disconnected"}
-          </div>
+          // Owner: Show gateway connection status
+          status === "connected" ? (
+            <div className="flex items-center gap-2 rounded-md border-2 border-primary/60 bg-white px-4 py-2.5 text-sm font-bold uppercase tracking-[0.12em] text-primary shadow-lg">
+              <span className="h-3 w-3 rounded-full bg-primary animate-pulse" />
+              Connected • {state.agents.length} agent{state.agents.length !== 1 ? "s" : ""}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 rounded-md border-2 border-gray-300 bg-white px-4 py-2.5 text-sm font-bold uppercase tracking-[0.12em] text-gray-700 shadow-lg">
+              <Cable className="h-4 w-4" />
+              {status === "connecting" ? "Connecting..." : "Disconnected - Agents will appear when connected"}
+            </div>
+          )
         )}
       </div>
 
@@ -647,14 +1093,31 @@ export const AgentOfficeScene = ({ isGuest = false, shareToken = null, guestColo
           <AgentBoxes
             agents={agentBoxes}
             selectedAgentId={selectedAgentId}
-            onSelectAgent={isGuest ? () => {} : setSelectedAgentId}
-            onOpenChat={isGuest ? () => {} : (agentId: string) => {
+            onSelectAgent={(agentId: string) => {
+              // Guests can only select the host-selected interactive agent
+              if (isGuest && agentId !== interactiveAgentId) {
+                console.log("Guest can only interact with host-selected agent:", interactiveAgentId);
+                return;
+              }
+              setSelectedAgentId(agentId);
+            }}
+            onOpenChat={(agentId: string) => {
+              // Guests can only open chat for the host-selected interactive agent
+              if (isGuest && agentId !== interactiveAgentId) {
+                console.log("Guest can only chat with host-selected agent:", interactiveAgentId);
+                return;
+              }
               setSelectedAgentId(agentId);
               setChatModalOpen(true);
-              // Load/refresh chat history when opening modal
-              void loadAgentHistory(agentId);
+              // Load/refresh chat history when opening modal (owner only)
+              if (!isGuest) {
+                void loadAgentHistory(agentId);
+              }
             }}
-            onViewDetails={isGuest ? () => {} : (agentId: string) => {
+            onViewDetails={isGuest ? () => {
+              // Guests cannot view details - only the interactive agent is accessible
+              console.log("Guests can only interact with the host-selected agent");
+            } : (agentId: string) => {
               setSelectedAgentId(agentId);
               setDetailsModalOpen(true);
             }}
@@ -702,8 +1165,8 @@ export const AgentOfficeScene = ({ isGuest = false, shareToken = null, guestColo
         />
       )}
 
-      {/* Chat Modal (owner only) */}
-      {!isGuest && chatModalOpen && selectedAgent && (
+      {/* Chat Modal */}
+      {chatModalOpen && selectedAgent && (
         <ChatModal
           agentId={selectedAgent.id}
           agentName={selectedAgent.name}
@@ -712,6 +1175,7 @@ export const AgentOfficeScene = ({ isGuest = false, shareToken = null, guestColo
             setSelectedAgentId(null);
           }}
           onSendMessage={handleSendMessage}
+          isWaitingForResponse={isGuest ? guestChat.isWaitingForResponse : false}
         />
       )}
 

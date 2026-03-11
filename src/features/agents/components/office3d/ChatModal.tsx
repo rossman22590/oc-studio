@@ -13,9 +13,10 @@ type ChatModalProps = {
   agentName: string;
   onClose: () => void;
   onSendMessage?: (agentId: string, message: string) => void;
+  isWaitingForResponse?: boolean;
 };
 
-export const ChatModal = ({ agentId, agentName, onClose, onSendMessage }: ChatModalProps) => {
+export const ChatModal = ({ agentId, agentName, onClose, onSendMessage, isWaitingForResponse = false }: ChatModalProps) => {
   const { state } = useAgentStore();
   const agent = state.agents.find((a) => a.agentId === agentId);
   const [message, setMessage] = useState("");
@@ -45,7 +46,7 @@ export const ChatModal = ({ agentId, agentName, onClose, onSendMessage }: ChatMo
   }, [chatItems.length, liveAssistantText, liveThinkingText]);
 
   const handleSend = () => {
-    if (!message.trim() || !onSendMessage) return;
+    if (!message.trim() || !onSendMessage || isWaitingForResponse) return;
     onSendMessage(agentId, message);
     setMessage("");
   };
@@ -71,6 +72,11 @@ export const ChatModal = ({ agentId, agentName, onClose, onSendMessage }: ChatMo
             {agent?.status === "running" && (
               <span className="text-xs text-muted-foreground uppercase tracking-wider">
                 Running...
+              </span>
+            )}
+            {isWaitingForResponse && (
+              <span className="text-xs text-muted-foreground uppercase tracking-wider">
+                Waiting for response...
               </span>
             )}
           </div>
@@ -192,18 +198,18 @@ export const ChatModal = ({ agentId, agentName, onClose, onSendMessage }: ChatMo
                   handleSend();
                 }
               }}
-              placeholder="Type a message..."
+              placeholder={isWaitingForResponse ? "Waiting for agent response..." : "Type a message..."}
               className="flex-1 rounded-md border border-input bg-background px-4 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
               autoFocus
-              disabled={agent?.status === "running"}
+              disabled={agent?.status === "running" || isWaitingForResponse}
             />
             <VoiceDictationButton
               onTranscript={(text) => setMessage((prev) => prev ? `${prev} ${text}` : text)}
-              disabled={agent?.status === "running"}
+              disabled={agent?.status === "running" || isWaitingForResponse}
             />
             <button
               onClick={handleSend}
-              disabled={!message.trim() || agent?.status === "running"}
+              disabled={!message.trim() || agent?.status === "running" || isWaitingForResponse}
               className="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Send className="h-4 w-4" />

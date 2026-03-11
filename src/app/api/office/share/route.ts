@@ -7,6 +7,7 @@ export const runtime = "nodejs";
 type ShareSession = {
   token: string;
   ownerId: string;
+  interactiveAgentId: string | null; // The ONE agent guests can interact with
   createdAt: number;
   expiresAt: number;
 };
@@ -32,8 +33,9 @@ const cleanExpired = () => {
 /* ─── POST: Generate a new share token ─── */
 export async function POST(request: NextRequest) {
   try {
-    const body = (await request.json()) as { ownerId?: string };
+    const body = (await request.json()) as { ownerId?: string; interactiveAgentId?: string };
     const ownerId = body.ownerId || `owner-${crypto.randomUUID().slice(0, 8)}`;
+    const interactiveAgentId = body.interactiveAgentId?.trim() || null;
 
     cleanExpired();
 
@@ -47,14 +49,25 @@ export async function POST(request: NextRequest) {
     const session: ShareSession = {
       token,
       ownerId,
+      interactiveAgentId,
       createdAt: now,
       expiresAt: now + TOKEN_TTL_MS,
     };
 
     sessions.set(token, session);
 
-    const origin = request.nextUrl.origin;
-    const shareUrl = `${origin}/agent-office?shareToken=${token}`;
+    // Get base URL from environment variable or construct from request headers
+    let baseUrl = process.env.NEXT_PUBLIC_SITE_URL;
+    if (!baseUrl) {
+      const host = request.headers.get("host") || request.nextUrl.host;
+      const protocol =
+        request.headers.get("x-forwarded-proto") ||
+        (request.nextUrl.protocol === "https:" ? "https" : "http");
+      baseUrl = `${protocol}://${host}`;
+    }
+    // Remove trailing slash if present
+    baseUrl = baseUrl.replace(/\/$/, "");
+    const shareUrl = `${baseUrl}/agent-office?shareToken=${token}`;
 
     return NextResponse.json({
       token,
@@ -83,6 +96,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     valid: true,
     ownerId: session.ownerId,
+    interactiveAgentId: session.interactiveAgentId,
     expiresAt: session.expiresAt,
   });
 }
