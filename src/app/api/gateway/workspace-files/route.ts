@@ -68,28 +68,19 @@ export async function GET(request: Request) {
       );
     }
 
-    // Determine workspace directory (relative for SSH; absolute for Daytona set below)
+    // Determine workspace directory (main uses absolute for Daytona; others relative, resolves from home)
     const workspaceDir = agentId === "main" || useRootWorkspace
       ? "/home/daytona/.openclaw/workspace"
       : `.openclaw/workspace-${agentId}`;
     
-    let targetPath = path.trim()
+    const targetPath = path.trim()
       ? `${workspaceDir}/${path.trim()}`
       : workspaceDir;
 
     // Check if using Daytona - use API directly (daytona.works or daytonaproxy*.net)
     const isDaytona = gatewayUrl.includes("daytona.works") || gatewayUrl.includes("daytonaproxy");
-    console.log("Workspace files request:", { agentId, path: path || "(root)", isDaytona, gatewayUrl: gatewayUrl ? `${gatewayUrl.slice(0, 50)}...` : "(none)" });
     
     if (isDaytona) {
-      // Daytona Toolbox API requires absolute path; match console workspace path
-      const daytonaWorkspaceDir = agentId === "main" || useRootWorkspace
-        ? "/home/daytona/.openclaw/workspace"
-        : `/home/daytona/.openclaw/workspace-${agentId}`;
-      targetPath = path.trim()
-        ? `${daytonaWorkspaceDir}/${path.trim()}`
-        : daytonaWorkspaceDir;
-
       // Extract sandbox ID: wss://18789-<uuid>.proxy.daytona.works or ...daytonaproxy01.net
       const match = gatewayUrl.match(/\/\/\d+-([a-f0-9-]+)\./);
       const sandboxId = match ? match[1] : null;
@@ -106,12 +97,8 @@ export async function GET(request: Request) {
         throw new Error("DAYTONA_API_KEY environment variable is required for Daytona workspaces");
       }
 
-      console.log("Daytona sandbox ID:", sandboxId);
-      console.log("Listing files in:", targetPath);
-
       // Use Daytona Toolbox API to list files
       const apiUrl = `${daytonaServerUrl}/toolbox/${sandboxId}/toolbox/files?path=${encodeURIComponent(targetPath)}`;
-      console.log("API URL:", apiUrl);
       
       const response = await fetch(apiUrl, {
         method: "GET",
@@ -161,41 +148,21 @@ export async function GET(request: Request) {
       }
 
       const rawResponse = await response.text();
-      console.log("Raw Daytona response (first 500 chars):", rawResponse.substring(0, 500));
+      const files = JSON.parse(rawResponse) as Array<Record<string, unknown>>;
 
-      const parsed = JSON.parse(rawResponse) as unknown;
-      // API may return array directly or wrapped (e.g. { files: [...] })
-      let files: Array<Record<string, unknown>> = [];
-      if (Array.isArray(parsed)) {
-        files = parsed;
-      } else if (parsed && typeof parsed === "object") {
-        const obj = parsed as Record<string, unknown>;
-        if (Array.isArray(obj.files)) files = obj.files;
-        else if (Array.isArray(obj.entries)) files = obj.entries;
-      }
-
-      console.log("Daytona file list length:", files.length, "sample:", JSON.stringify(files.slice(0, 3), null, 2));
-
-      // Convert Daytona response to our format (support name/Name, isDir/is_dir, modTime/mod_time)
+      // Convert Daytona response to our format (Daytona uses isDir, modTime)
       const entries: WorkspaceFileEntry[] = files
-        .filter(f => {
-          const n = (f.name ?? f.Name) as string;
-          return n && n !== "." && n !== "..";
-        })
+        .filter(f => f.name !== "." && f.name !== "..")
         .map(f => {
-          const name = (f.name ?? f.Name) as string;
-          const isDir = f.isDir === true || f.is_dir === true;
-          const modTime = f.modTime ?? f.mod_time;
+          const isDir = f.isDir === true;
           return {
-            name,
-            path: path.trim() ? `${path.trim()}/${name}` : name,
+            name: f.name as string,
+            path: path.trim() ? `${path.trim()}/${f.name}` : (f.name as string),
             isDirectory: isDir,
-            size: isDir ? undefined : (f.size as number) ?? undefined,
-            updatedAtMs: modTime != null ? (typeof modTime === "number" ? modTime * 1000 : new Date(String(modTime)).getTime()) : undefined,
+            size: isDir ? undefined : (f.size as number),
+            updatedAtMs: f.modTime != null ? (typeof f.modTime === "number" ? f.modTime * 1000 : new Date(f.modTime as string).getTime()) : undefined,
           };
         });
-      
-      console.log("Converted entries:", JSON.stringify(entries.slice(0, 3), null, 2));
 
       // Sort: directories first, then alphabetically
       entries.sort((a, b) => {
